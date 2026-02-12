@@ -21,8 +21,21 @@ const initialState = {
 }
 
 export default function LoginPage() {
-    // standard client-side submission for better debugging if server action fails silently
     const [state, formAction] = useActionState(login, initialState)
+
+    const handleSubmit = (event: React.FormEvent<HTMLFormElement>) => {
+        event.preventDefault()
+        const formData = new FormData(event.currentTarget)
+        console.log('Submitting login form', Object.fromEntries(formData))
+        // using react's startTransition to wrap the server action if needed, 
+        // but formAction from useActionState handles it. 
+        // However, if the button does not trigger, let's use the form's onSubmit event 
+        // to call formAction manually.
+        // Actually, preventing default stops the automatic form action.
+        // Let's rely on the button type="submit" and form action.
+        // But the user says "nothing happens". This usually means client-side hydration issue or button not being type submit.
+        // Let's verify the button is type submit in the SubmitButton component.
+    }
 
     return (
         <div className="flex justify-center items-center h-full">
