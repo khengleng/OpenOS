@@ -16,7 +16,7 @@ export async function login(prevState: any, formData: FormData) {
     })
 
     if (error) {
-        return { error: 'Invalid login credentials' }
+        return { error: error.message }
     }
 
     revalidatePath('/', 'layout')
