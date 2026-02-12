@@ -21,6 +21,7 @@ const initialState = {
 }
 
 export default function LoginPage() {
+    // standard client-side submission for better debugging if server action fails silently
     const [state, formAction] = useActionState(login, initialState)
 
     return (

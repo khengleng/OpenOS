@@ -45,6 +45,7 @@ export async function updateSession(request: NextRequest) {
         !request.nextUrl.pathname.startsWith('/manifest') &&
         !request.nextUrl.pathname.startsWith('/sw') &&
         !request.nextUrl.pathname.startsWith('/workbox') &&
+        !request.nextUrl.pathname.startsWith('/icon-') &&
         request.nextUrl.pathname !== '/'
     ) {
         // no user, potentially respond by redirecting the user to the login page
