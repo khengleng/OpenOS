@@ -21,6 +21,7 @@ const eslintConfig = defineConfig([
     "next-env.d.ts",
     "public/sw.js",
     "public/workbox-*.js",
+    "scripts/**",
     "external/ClawWork/livebench/data/**",
     "external/ClawWork/venv/**",
   ]),

@@ -16,6 +16,8 @@
 # next.js
 /.next/
 /out/
+/public/sw.js
+/public/workbox-*.js
 
 # production
 /build
@@ -23,6 +25,7 @@
 # misc
 .DS_Store
 *.pem
+/external/ClawWork/
 
 # debug
 npm-debug.log*
