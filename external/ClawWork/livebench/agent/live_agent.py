@@ -5,6 +5,7 @@ LiveAgent - Main agent class for LiveBench with decision-making framework
 import os
 import json
 import asyncio
+import ast
 from datetime import datetime
 from typing import Dict, List, Optional, Any
 from pathlib import Path
@@ -712,7 +713,12 @@ class LiveAgent:
                             if 'actual_payment' in result_dict or 'payment' in result_dict:
                                 try:
                                     if not isinstance(result_dict, dict):
-                                        result_dict = eval(str(tool_result))
+                                        raw_result = str(tool_result)
+                                        try:
+                                            result_dict = json.loads(raw_result)
+                                        except (json.JSONDecodeError, TypeError):
+                                            parsed = ast.literal_eval(raw_result)
+                                            result_dict = parsed if isinstance(parsed, dict) else {}
                                     # Use actual_payment which respects evaluation threshold
                                     actual_payment = result_dict.get('actual_payment', result_dict.get('payment', 0))
                                     evaluation_score = result_dict.get('evaluation_score', 0.0)

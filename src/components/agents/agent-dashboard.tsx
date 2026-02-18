@@ -5,7 +5,7 @@ import { Agent, AgentCard } from "./agent-card";
 import { LaunchAgentDialog } from "./launch-agent-dialog";
 import { AlertCircle, Loader2 } from "lucide-react";
 
-const API_URL = process.env.NEXT_PUBLIC_CLAWWORK_API_URL || "https://clawwork-backend-production.up.railway.app";
+const API_BASE = "/api/clawwork";
 
 const fetcher = (url: string) => fetch(url).then((res) => {
     if (!res.ok) throw new Error('API Error');
@@ -13,7 +13,7 @@ const fetcher = (url: string) => fetch(url).then((res) => {
 });
 
 export function AgentDashboard() {
-    const { data, error, isLoading } = useSWR<{ agents: Agent[] }>(`${API_URL}/api/agents`, fetcher, {
+    const { data, error, isLoading } = useSWR<{ agents: Agent[] }>(`${API_BASE}/agents`, fetcher, {
         refreshInterval: 5000 // Poll every 5 seconds
     });
 
@@ -25,7 +25,7 @@ export function AgentDashboard() {
                     Error connecting to Agent Network
                 </div>
                 <p className="text-sm">
-                    Could not fetch agents. Ensure the backend is running at {API_URL}.
+                    Could not fetch agents. Ensure the backend is reachable from this app and `CLAWWORK_INTERNAL_URL` is configured.
                 </p>
                 {/* Still verify we can launch even if list fails (maybe server just started empty?) - unlikely if fetch failed */}
                 <div className="flex gap-2">

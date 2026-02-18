@@ -11,10 +11,15 @@ import os
 import json
 import asyncio
 import random
+import secrets
+import time
+import hashlib
+import re
 from datetime import datetime
 from pathlib import Path
-from typing import Dict, List, Optional
-from fastapi import FastAPI, WebSocket, WebSocketDisconnect, HTTPException, Query
+from collections import deque
+from typing import Deque, Dict, List, Optional
+from fastapi import FastAPI, WebSocket, WebSocketDisconnect, HTTPException, Query, Depends, Header, Request
 from fastapi.responses import FileResponse
 from fastapi.middleware.cors import CORSMiddleware
 from pydantic import BaseModel
@@ -26,21 +31,150 @@ import sys
 
 app = FastAPI(title="LiveBench API", version="1.0.0")
 
-# Enable CORS for frontend
+
+def _parse_csv_env(name: str, default: str) -> List[str]:
+    raw = os.getenv(name, default)
+    return [item.strip() for item in raw.split(",") if item.strip()]
+
+
+_DEFAULT_CORS_ORIGINS = "http://localhost:3000,http://127.0.0.1:3000"
+ALLOWED_CORS_ORIGINS = _parse_csv_env("CLAWWORK_CORS_ORIGINS", _DEFAULT_CORS_ORIGINS)
+
 app.add_middleware(
     CORSMiddleware,
-    allow_origins=["*"],  # In production, specify your frontend URL
+    allow_origins=ALLOWED_CORS_ORIGINS,
     allow_credentials=True,
-    allow_methods=["*"],
-    allow_headers=["*"],
+    allow_methods=["GET", "POST", "PUT", "OPTIONS"],
+    allow_headers=["Authorization", "Content-Type", "X-ClawWork-Token"],
 )
 
-# Data path
+CLAWWORK_ENV = os.getenv("CLAWWORK_ENV", "development").strip().lower()
+_default_require_auth = "true" if CLAWWORK_ENV == "production" else "false"
+REQUIRE_MUTATION_AUTH = os.getenv("CLAWWORK_REQUIRE_AUTH", _default_require_auth).strip().lower() == "true"
+REQUIRE_READ_AUTH = os.getenv("CLAWWORK_REQUIRE_READ_AUTH", _default_require_auth).strip().lower() == "true"
+_default_require_tenant = "true" if CLAWWORK_ENV == "production" else "false"
+REQUIRE_TENANT_CONTEXT = os.getenv("CLAWWORK_REQUIRE_TENANT_CONTEXT", _default_require_tenant).strip().lower() == "true"
+CLAWWORK_API_TOKEN = os.getenv("CLAWWORK_API_TOKEN", "").strip()
+_default_rate_limit_enabled = "true" if CLAWWORK_ENV == "production" else "false"
+RATE_LIMIT_ENABLED = os.getenv("CLAWWORK_RATE_LIMIT_ENABLED", _default_rate_limit_enabled).strip().lower() == "true"
+RATE_LIMIT_WINDOW_SEC = int(os.getenv("CLAWWORK_RATE_LIMIT_WINDOW_SEC", "60"))
+READ_RATE_LIMIT = int(os.getenv("CLAWWORK_READ_RATE_LIMIT", "240"))
+WRITE_RATE_LIMIT = int(os.getenv("CLAWWORK_WRITE_RATE_LIMIT", "60"))
+MAX_TERMINAL_LOG_BYTES = int(os.getenv("CLAWWORK_MAX_TERMINAL_LOG_BYTES", "262144"))
+ALLOWED_ENV_VAR_KEYS = set(
+    _parse_csv_env(
+        "CLAWWORK_ALLOWED_ENV_KEYS",
+        "OPENAI_API_KEY,E2B_API_KEY,WEB_SEARCH_API_KEY,ANTHROPIC_API_KEY",
+    )
+)
 
-# Data path
-DATA_PATH = Path(__file__).parent.parent / "data" / "agent_data"
-HIDDEN_AGENTS_PATH = Path(__file__).parent.parent / "data" / "hidden_agents.json"
-SIMULATIONS_PATH = Path(__file__).parent.parent / "data" / "simulations.json"
+if (REQUIRE_MUTATION_AUTH or REQUIRE_READ_AUTH) and not CLAWWORK_API_TOKEN:
+    raise RuntimeError("API auth is enabled but CLAWWORK_API_TOKEN is not configured")
+
+_rate_limit_buckets: Dict[str, Deque[float]] = {}
+TENANT_HEADER = "x-tenant-id"
+TENANT_ID_PATTERN = re.compile(r"^[a-zA-Z0-9_.:@-]{1,128}$")
+
+
+def _get_client_ip(request: Request) -> str:
+    forwarded_for = request.headers.get("x-forwarded-for", "")
+    if forwarded_for:
+        return forwarded_for.split(",")[0].strip()
+    if request.client and request.client.host:
+        return request.client.host
+    return "unknown"
+
+
+def _ip_hash(ip: str) -> str:
+    return hashlib.sha256(ip.encode("utf-8")).hexdigest()[:16]
+
+
+def _audit_log(request: Request, action: str, status: str, details: Optional[dict] = None) -> None:
+    payload = {
+        "type": "audit",
+        "source": "clawwork-api",
+        "ts": datetime.utcnow().isoformat() + "Z",
+        "action": action,
+        "status": status,
+        "method": request.method,
+        "path": request.url.path,
+        "ip_hash": _ip_hash(_get_client_ip(request)),
+        "details": details or {},
+    }
+    print(json.dumps(payload, separators=(",", ":")))
+
+
+def _enforce_rate_limit(request: Request, action: str, is_write: bool) -> None:
+    if not RATE_LIMIT_ENABLED:
+        return
+
+    limit = WRITE_RATE_LIMIT if is_write else READ_RATE_LIMIT
+    window_sec = max(1, RATE_LIMIT_WINDOW_SEC)
+    now = time.time()
+    bucket_key = f"{action}:{_get_client_ip(request)}"
+    bucket = _rate_limit_buckets.setdefault(bucket_key, deque())
+
+    while bucket and (now - bucket[0]) > window_sec:
+        bucket.popleft()
+
+    if len(bucket) >= limit:
+        _audit_log(
+            request,
+            action=action,
+            status="rate_limited",
+            details={"limit": limit, "window_sec": window_sec},
+        )
+        raise HTTPException(status_code=429, detail="Too many requests. Please retry later.")
+
+    bucket.append(now)
+
+BASE_DATA_ROOT = (Path(__file__).parent.parent / "data").resolve()
+TENANTS_ROOT = BASE_DATA_ROOT / "tenants"
+
+
+def _extract_auth_token(
+    authorization: Optional[str] = None,
+    x_clawwork_token: Optional[str] = None,
+) -> str:
+    if authorization and authorization.lower().startswith("bearer "):
+        return authorization.split(" ", 1)[1].strip()
+    if x_clawwork_token:
+        return x_clawwork_token.strip()
+    return ""
+
+
+def _validate_api_token(token: str) -> bool:
+    return bool(token) and secrets.compare_digest(token, CLAWWORK_API_TOKEN)
+
+
+def _resolve_tenant_id(request: Request) -> str:
+    tenant_id = (request.headers.get(TENANT_HEADER) or "").strip()
+    if not tenant_id:
+        if REQUIRE_TENANT_CONTEXT:
+            raise HTTPException(status_code=400, detail="Missing tenant context")
+        return "default"
+    if not TENANT_ID_PATTERN.fullmatch(tenant_id):
+        raise HTTPException(status_code=400, detail="Invalid tenant context")
+    return tenant_id
+
+
+def _tenant_key(tenant_id: str) -> str:
+    return hashlib.sha256(tenant_id.encode("utf-8")).hexdigest()[:32]
+
+
+def _get_tenant_paths(request: Request) -> Dict[str, object]:
+    tenant_id = _resolve_tenant_id(request)
+    key = _tenant_key(tenant_id)
+    tenant_root = TENANTS_ROOT / key
+    return {
+        "tenant_id": tenant_id,
+        "tenant_key": key,
+        "tenant_root": tenant_root,
+        "data_path": tenant_root / "agent_data",
+        "simulations_path": tenant_root / "simulations.json",
+        "hidden_agents_path": tenant_root / "hidden_agents.json",
+        "displaying_names_path": tenant_root / "displaying_names.json",
+    }
 
 # Task value lookup (task_id -> task_value_usd)
 _TASK_VALUES_PATH = Path(__file__).parent.parent.parent / "scripts" / "task_value_estimates" / "task_values.jsonl"
@@ -112,18 +246,20 @@ class EconomicMetrics(BaseModel):
 # WebSocket Connection Manager
 class ConnectionManager:
     def __init__(self):
-        self.active_connections: List[WebSocket] = []
+        self.active_connections: Dict[WebSocket, str] = {}
 
-    async def connect(self, websocket: WebSocket):
+    async def connect(self, websocket: WebSocket, tenant_key: str):
         await websocket.accept()
-        self.active_connections.append(websocket)
+        self.active_connections[websocket] = tenant_key
 
     def disconnect(self, websocket: WebSocket):
-        self.active_connections.remove(websocket)
+        self.active_connections.pop(websocket, None)
 
-    async def broadcast(self, message: dict):
+    async def broadcast(self, message: dict, tenant_key: Optional[str] = None):
         """Broadcast message to all connected clients"""
-        for connection in self.active_connections:
+        for connection, connection_tenant in list(self.active_connections.items()):
+            if tenant_key and connection_tenant != tenant_key:
+                continue
             try:
                 await connection.send_json(message)
             except:
@@ -158,12 +294,58 @@ class SimulationConfig(BaseModel):
     env_vars: Optional[Dict[str, str]] = None
 
 
+def require_write_auth(
+    request: Request,
+    authorization: Optional[str] = Header(default=None),
+    x_clawwork_token: Optional[str] = Header(default=None),
+):
+    _enforce_rate_limit(request, action="api.write", is_write=True)
+    _get_tenant_paths(request)
+
+    if not REQUIRE_MUTATION_AUTH:
+        return
+
+    token = _extract_auth_token(authorization=authorization, x_clawwork_token=x_clawwork_token)
+    if not _validate_api_token(token):
+        _audit_log(request, action="api.write.auth", status="denied")
+        raise HTTPException(status_code=401, detail="Unauthorized")
+
+
+def require_read_auth(
+    request: Request,
+    authorization: Optional[str] = Header(default=None),
+    x_clawwork_token: Optional[str] = Header(default=None),
+):
+    _enforce_rate_limit(request, action="api.read", is_write=False)
+    _get_tenant_paths(request)
+
+    if not REQUIRE_READ_AUTH:
+        return
+
+    token = _extract_auth_token(authorization=authorization, x_clawwork_token=x_clawwork_token)
+    if not _validate_api_token(token):
+        _audit_log(request, action="api.read.auth", status="denied")
+        raise HTTPException(status_code=401, detail="Unauthorized")
+
+
 @app.post("/api/simulations")
-async def start_simulation(sim_config: SimulationConfig):
+async def start_simulation(
+    request: Request,
+    sim_config: SimulationConfig,
+    _: None = Depends(require_write_auth),
+):
     """Start a new agent simulation"""
     try:
+        tenant_paths = _get_tenant_paths(request)
+        tenant_data_path = tenant_paths["data_path"]
+        simulations_path = tenant_paths["simulations_path"]
+        tenant_key = tenant_paths["tenant_key"]
+
         # Generate unique simulation ID
         sim_id = str(uuid.uuid4())
+
+        livebench_config = sim_config.config.setdefault("livebench", {})
+        livebench_config["data_path"] = str(tenant_data_path)
         
         # Create config file
         config_dir = Path(__file__).parent.parent / "configs" / "generated"
@@ -182,8 +364,13 @@ async def start_simulation(sim_config: SimulationConfig):
         # Environment variables
         env = os.environ.copy()
         if sim_config.env_vars:
-            # Filter out empty keys
-            filtered_vars = {k: v for k, v in sim_config.env_vars.items() if v}
+            unknown_keys = [k for k in sim_config.env_vars if k not in ALLOWED_ENV_VAR_KEYS]
+            if unknown_keys:
+                raise HTTPException(
+                    status_code=400,
+                    detail=f"Unsupported env var keys: {', '.join(sorted(unknown_keys))}",
+                )
+            filtered_vars = {k: v for k, v in sim_config.env_vars.items() if v and k in ALLOWED_ENV_VAR_KEYS}
             env.update(filtered_vars)
         
         # Spawn subprocess
@@ -202,11 +389,11 @@ async def start_simulation(sim_config: SimulationConfig):
             signature = sim_config.config["livebench"]["agents"][0].get("signature", "unknown")
         
         # Save simulation record
-        SIMULATIONS_PATH.parent.mkdir(parents=True, exist_ok=True)
+        simulations_path.parent.mkdir(parents=True, exist_ok=True)
         simulations = []
-        if SIMULATIONS_PATH.exists():
+        if simulations_path.exists():
             try:
-                with open(SIMULATIONS_PATH, 'r') as f:
+                with open(simulations_path, 'r') as f:
                     simulations = json.load(f)
             except json.JSONDecodeError:
                 pass
@@ -216,34 +403,46 @@ async def start_simulation(sim_config: SimulationConfig):
             "pid": process.pid,
             "status": "running",
             "signature": signature,
+            "tenant_key": tenant_key,
             "config_path": str(config_path),
             "start_time": datetime.now().isoformat(),
         }
         simulations.append(new_sim)
         
-        with open(SIMULATIONS_PATH, 'w') as f:
+        with open(simulations_path, 'w') as f:
             json.dump(simulations, f, indent=2)
         
-        return {
+        response = {
             "status": "success",
             "message": "Simulation started",
             "simulation_id": sim_id,
             "pid": process.pid,
             "config_path": str(config_path)
         }
+        _audit_log(
+            request,
+            action="simulation.start",
+            status="allowed",
+            details={"simulation_id": sim_id, "signature": signature, "tenant_key": tenant_key},
+        )
+        return response
         
+    except HTTPException:
+        raise
     except Exception as e:
+        _audit_log(request, action="simulation.start", status="error", details={"error": str(e)})
         raise HTTPException(status_code=500, detail=str(e))
 
 
 @app.get("/api/simulations")
-async def get_simulations():
+async def get_simulations(request: Request, _: None = Depends(require_read_auth)):
     """List all simulations"""
-    if not SIMULATIONS_PATH.exists():
+    simulations_path = _get_tenant_paths(request)["simulations_path"]
+    if not simulations_path.exists():
         return {"simulations": []}
     
     try:
-        with open(SIMULATIONS_PATH, 'r') as f:
+        with open(simulations_path, 'r') as f:
             simulations = json.load(f)
             
         # Check current status of pids
@@ -259,7 +458,7 @@ async def get_simulations():
                     updated = True
         
         if updated:
-             with open(SIMULATIONS_PATH, 'w') as f:
+             with open(simulations_path, 'w') as f:
                 json.dump(simulations, f, indent=2)
                 
         return {"simulations": simulations}
@@ -268,15 +467,16 @@ async def get_simulations():
 
 
 @app.post("/api/simulations/{sim_id}/stop")
-async def stop_simulation(sim_id: str):
+async def stop_simulation(sim_id: str, request: Request, _: None = Depends(require_write_auth)):
     """Stop a running simulation"""
     import signal
+    simulations_path = _get_tenant_paths(request)["simulations_path"]
     
-    if not SIMULATIONS_PATH.exists():
+    if not simulations_path.exists():
         raise HTTPException(status_code=404, detail="No simulations found")
         
     try:
-        with open(SIMULATIONS_PATH, 'r') as f:
+        with open(simulations_path, 'r') as f:
             simulations = json.load(f)
             
         found = False
@@ -296,24 +496,37 @@ async def stop_simulation(sim_id: str):
         if not found:
             raise HTTPException(status_code=404, detail="Simulation not found")
             
-        with open(SIMULATIONS_PATH, 'w') as f:
+        with open(simulations_path, 'w') as f:
             json.dump(simulations, f, indent=2)
             
-        return {"status": "success", "message": "Simulation stopped"}
+        response = {"status": "success", "message": "Simulation stopped"}
+        _audit_log(request, action="simulation.stop", status="allowed", details={"simulation_id": sim_id})
+        return response
         
+    except HTTPException:
+        raise
     except Exception as e:
+         _audit_log(
+             request,
+             action="simulation.stop",
+             status="error",
+             details={"simulation_id": sim_id, "error": str(e)},
+         )
          raise HTTPException(status_code=500, detail=str(e))
 
 
 @app.get("/api/agents")
-async def get_agents():
+async def get_agents(request: Request, _: None = Depends(require_read_auth)):
     """Get list of all agents with their current status"""
     agents = []
+    tenant_paths = _get_tenant_paths(request)
+    data_path = tenant_paths["data_path"]
+    simulations_path = tenant_paths["simulations_path"]
 
-    if not DATA_PATH.exists():
+    if not data_path.exists():
         return {"agents": []}
 
-    for agent_dir in DATA_PATH.iterdir():
+    for agent_dir in data_path.iterdir():
         if agent_dir.is_dir():
             signature = agent_dir.name
 
@@ -342,9 +555,9 @@ async def get_agents():
             # Check if running
             is_running = False
             sim_id = None
-            if SIMULATIONS_PATH.exists():
+            if simulations_path.exists():
                 try:
-                    with open(SIMULATIONS_PATH, 'r') as f:
+                    with open(simulations_path, 'r') as f:
                         simulations = json.load(f)
                     for sim in simulations:
                         if sim.get("signature") == signature and sim.get("status") == "running":
@@ -376,9 +589,10 @@ async def get_agents():
 
 
 @app.get("/api/agents/{signature}")
-async def get_agent_details(signature: str):
+async def get_agent_details(signature: str, request: Request, _: None = Depends(require_read_auth)):
     """Get detailed information about a specific agent"""
-    agent_dir = DATA_PATH / signature
+    data_path = _get_tenant_paths(request)["data_path"]
+    agent_dir = data_path / signature
 
     if not agent_dir.exists():
         raise HTTPException(status_code=404, detail="Agent not found")
@@ -439,9 +653,10 @@ async def get_agent_details(signature: str):
 
 
 @app.get("/api/agents/{signature}/tasks")
-async def get_agent_tasks(signature: str):
+async def get_agent_tasks(signature: str, request: Request, _: None = Depends(require_read_auth)):
     """Get all tasks assigned to an agent"""
-    agent_dir = DATA_PATH / signature
+    data_path = _get_tenant_paths(request)["data_path"]
+    agent_dir = data_path / signature
 
     if not agent_dir.exists():
         raise HTTPException(status_code=404, detail="Agent not found")
@@ -487,22 +702,42 @@ async def get_agent_tasks(signature: str):
 
 
 @app.get("/api/agents/{signature}/terminal-log/{date}")
-async def get_terminal_log(signature: str, date: str):
+async def get_terminal_log(signature: str, date: str, request: Request, _: None = Depends(require_read_auth)):
     """Get terminal log for an agent on a specific date"""
-    agent_dir = DATA_PATH / signature
+    if not re.fullmatch(r"^\d{4}-\d{2}-\d{2}$", date):
+        raise HTTPException(status_code=400, detail="Invalid date format")
+
+    data_path = _get_tenant_paths(request)["data_path"]
+    agent_dir = data_path / signature
     if not agent_dir.exists():
         raise HTTPException(status_code=404, detail="Agent not found")
     log_file = agent_dir / "terminal_logs" / f"{date}.log"
     if not log_file.exists():
         raise HTTPException(status_code=404, detail="Log not found")
-    content = log_file.read_text(encoding="utf-8", errors="replace")
-    return {"date": date, "content": content}
+
+    max_bytes = max(1024, MAX_TERMINAL_LOG_BYTES)
+    file_size = log_file.stat().st_size
+    truncated = file_size > max_bytes
+    with open(log_file, "rb") as f:
+        if truncated:
+            f.seek(max(0, file_size - max_bytes))
+        raw = f.read(max_bytes)
+    content = raw.decode("utf-8", errors="replace")
+
+    return {
+        "date": date,
+        "content": content,
+        "truncated": truncated,
+        "bytes_returned": len(raw),
+        "file_size_bytes": file_size,
+    }
 
 
 @app.get("/api/agents/{signature}/learning")
-async def get_agent_learning(signature: str):
+async def get_agent_learning(signature: str, request: Request, _: None = Depends(require_read_auth)):
     """Get agent's learning memory"""
-    agent_dir = DATA_PATH / signature
+    data_path = _get_tenant_paths(request)["data_path"]
+    agent_dir = data_path / signature
 
     if not agent_dir.exists():
         raise HTTPException(status_code=404, detail="Agent not found")
@@ -538,9 +773,10 @@ async def get_agent_learning(signature: str):
 
 
 @app.get("/api/agents/{signature}/economic")
-async def get_agent_economic(signature: str):
+async def get_agent_economic(signature: str, request: Request, _: None = Depends(require_read_auth)):
     """Get economic metrics for an agent"""
-    agent_dir = DATA_PATH / signature
+    data_path = _get_tenant_paths(request)["data_path"]
+    agent_dir = data_path / signature
 
     if not agent_dir.exists():
         raise HTTPException(status_code=404, detail="Agent not found")
@@ -579,14 +815,15 @@ async def get_agent_economic(signature: str):
 
 
 @app.get("/api/leaderboard")
-async def get_leaderboard():
+async def get_leaderboard(request: Request, _: None = Depends(require_read_auth)):
     """Get leaderboard data for all agents with summary metrics and balance histories"""
-    if not DATA_PATH.exists():
+    data_path = _get_tenant_paths(request)["data_path"]
+    if not data_path.exists():
         return {"agents": []}
 
     agents = []
 
-    for agent_dir in DATA_PATH.iterdir():
+    for agent_dir in data_path.iterdir():
         if not agent_dir.is_dir():
             continue
 
@@ -664,13 +901,18 @@ ARTIFACT_MIME_TYPES = {
 
 
 @app.get("/api/artifacts/random")
-async def get_random_artifacts(count: int = Query(default=30, ge=1, le=100)):
+async def get_random_artifacts(
+    request: Request,
+    count: int = Query(default=30, ge=1, le=100),
+    _: None = Depends(require_read_auth),
+):
     """Get a random sample of agent-produced artifact files"""
-    if not DATA_PATH.exists():
+    data_path = _get_tenant_paths(request)["data_path"]
+    if not data_path.exists():
         return {"artifacts": []}
 
     artifacts = []
-    for agent_dir in DATA_PATH.iterdir():
+    for agent_dir in data_path.iterdir():
         if not agent_dir.is_dir():
             continue
         sandbox_dir = agent_dir / "sandbox"
@@ -690,7 +932,7 @@ async def get_random_artifacts(count: int = Query(default=30, ge=1, le=100)):
                 ext = file_path.suffix.lower()
                 if ext not in ARTIFACT_EXTENSIONS:
                     continue
-                rel_path = str(file_path.relative_to(DATA_PATH))
+                rel_path = str(file_path.relative_to(data_path))
                 artifacts.append({
                     "agent": signature,
                     "date": date_dir.name,
@@ -707,51 +949,63 @@ async def get_random_artifacts(count: int = Query(default=30, ge=1, le=100)):
 
 
 @app.get("/api/artifacts/file")
-async def get_artifact_file(path: str = Query(...)):
+async def get_artifact_file(
+    request: Request,
+    path: str = Query(...),
+    _: None = Depends(require_read_auth),
+):
     """Serve an artifact file for preview/download"""
-    if ".." in path:
+    if not path or "\x00" in path:
         raise HTTPException(status_code=400, detail="Invalid path")
 
-    file_path = (DATA_PATH / path).resolve()
+    requested_path = Path(path)
+    if requested_path.is_absolute() or ".." in requested_path.parts:
+        raise HTTPException(status_code=400, detail="Invalid path")
+
+    data_root = _get_tenant_paths(request)["data_path"].resolve()
+    file_path = (data_root / requested_path).resolve()
     # Ensure resolved path is within DATA_PATH
-    if not str(file_path).startswith(str(DATA_PATH.resolve())):
+    if file_path != data_root and data_root not in file_path.parents:
         raise HTTPException(status_code=403, detail="Access denied")
 
     if not file_path.exists() or not file_path.is_file():
         raise HTTPException(status_code=404, detail="File not found")
 
     ext = file_path.suffix.lower()
+    if ext not in ARTIFACT_EXTENSIONS:
+        raise HTTPException(status_code=400, detail="Unsupported artifact type")
     media_type = ARTIFACT_MIME_TYPES.get(ext, 'application/octet-stream')
     return FileResponse(file_path, media_type=media_type)
 
 
 @app.get("/api/settings/hidden-agents")
-async def get_hidden_agents():
+async def get_hidden_agents(request: Request, _: None = Depends(require_read_auth)):
     """Get list of hidden agent signatures"""
-    if HIDDEN_AGENTS_PATH.exists():
-        with open(HIDDEN_AGENTS_PATH, 'r') as f:
+    hidden_agents_path = _get_tenant_paths(request)["hidden_agents_path"]
+    if hidden_agents_path.exists():
+        with open(hidden_agents_path, 'r') as f:
             hidden = json.load(f)
         return {"hidden": hidden}
     return {"hidden": []}
 
 
 @app.put("/api/settings/hidden-agents")
-async def set_hidden_agents(body: dict):
+async def set_hidden_agents(request: Request, body: dict, _: None = Depends(require_write_auth)):
     """Set list of hidden agent signatures"""
+    hidden_agents_path = _get_tenant_paths(request)["hidden_agents_path"]
     hidden = body.get("hidden", [])
-    HIDDEN_AGENTS_PATH.parent.mkdir(parents=True, exist_ok=True)
-    with open(HIDDEN_AGENTS_PATH, 'w') as f:
+    hidden_agents_path.parent.mkdir(parents=True, exist_ok=True)
+    with open(hidden_agents_path, 'w') as f:
         json.dump(hidden, f)
+    _audit_log(request, action="settings.hidden_agents.update", status="allowed", details={"count": len(hidden)})
     return {"status": "ok"}
 
-
-DISPLAYING_NAMES_PATH = Path(__file__).parent.parent / "data" / "displaying_names.json"
-
 @app.get("/api/settings/displaying-names")
-async def get_displaying_names():
+async def get_displaying_names(request: Request, _: None = Depends(require_read_auth)):
     """Get display name mapping {signature: display_name}"""
-    if DISPLAYING_NAMES_PATH.exists():
-        with open(DISPLAYING_NAMES_PATH, 'r', encoding='utf-8') as f:
+    displaying_names_path = _get_tenant_paths(request)["displaying_names_path"]
+    if displaying_names_path.exists():
+        with open(displaying_names_path, 'r', encoding='utf-8') as f:
             return json.load(f)
     return {}
 
@@ -759,7 +1013,28 @@ async def get_displaying_names():
 @app.websocket("/ws")
 async def websocket_endpoint(websocket: WebSocket):
     """WebSocket endpoint for real-time updates"""
-    await manager.connect(websocket)
+    tenant_id = (websocket.headers.get(TENANT_HEADER) or websocket.query_params.get("tenant_id") or "").strip()
+    if not tenant_id:
+        if REQUIRE_TENANT_CONTEXT:
+            await websocket.close(code=1008)
+            return
+        tenant_id = "default"
+    if not TENANT_ID_PATTERN.fullmatch(tenant_id):
+        await websocket.close(code=1008)
+        return
+    tenant_key = _tenant_key(tenant_id)
+
+    if REQUIRE_READ_AUTH:
+        auth_header = websocket.headers.get("authorization", "")
+        token = _extract_auth_token(
+            authorization=auth_header,
+            x_clawwork_token=websocket.headers.get("x-clawwork-token"),
+        )
+        if not _validate_api_token(token):
+            await websocket.close(code=1008)
+            return
+
+    await manager.connect(websocket, tenant_key=tenant_key)
     try:
         # Send initial connection message
         await websocket.send_json({
@@ -780,12 +1055,14 @@ async def websocket_endpoint(websocket: WebSocket):
 
 
 @app.post("/api/broadcast")
-async def broadcast_message(message: dict):
+async def broadcast_message(request: Request, message: dict, _: None = Depends(require_write_auth)):
     """
     Endpoint for LiveBench to broadcast updates to connected clients
     This should be called by the LiveAgent during execution
     """
-    await manager.broadcast(message)
+    tenant_key = _get_tenant_paths(request)["tenant_key"]
+    await manager.broadcast(message, tenant_key=tenant_key)
+    _audit_log(request, action="broadcast.send", status="allowed")
     return {"status": "broadcast sent"}
 
 
@@ -800,16 +1077,27 @@ async def watch_agent_files():
 
     while True:
         try:
-            if DATA_PATH.exists():
-                for agent_dir in DATA_PATH.iterdir():
-                    if agent_dir.is_dir():
+            if TENANTS_ROOT.exists():
+                for tenant_dir in TENANTS_ROOT.iterdir():
+                    if not tenant_dir.is_dir():
+                        continue
+
+                    tenant_key = tenant_dir.name
+                    tenant_data_path = tenant_dir / "agent_data"
+                    if not tenant_data_path.exists():
+                        continue
+
+                    for agent_dir in tenant_data_path.iterdir():
+                        if not agent_dir.is_dir():
+                            continue
+
                         signature = agent_dir.name
 
                         # Check balance file
                         balance_file = agent_dir / "economic" / "balance.jsonl"
                         if balance_file.exists():
                             mtime = balance_file.stat().st_mtime
-                            key = f"{signature}_balance"
+                            key = f"{tenant_key}:{signature}_balance"
 
                             if key not in last_modified or mtime > last_modified[key]:
                                 last_modified[key] = mtime
@@ -823,13 +1111,13 @@ async def watch_agent_files():
                                             "type": "balance_update",
                                             "signature": signature,
                                             "data": data
-                                        })
+                                        }, tenant_key=tenant_key)
 
                         # Check decisions file
                         decision_file = agent_dir / "decisions" / "decisions.jsonl"
                         if decision_file.exists():
                             mtime = decision_file.stat().st_mtime
-                            key = f"{signature}_decision"
+                            key = f"{tenant_key}:{signature}_decision"
 
                             if key not in last_modified or mtime > last_modified[key]:
                                 last_modified[key] = mtime
@@ -843,7 +1131,7 @@ async def watch_agent_files():
                                             "type": "activity_update",
                                             "signature": signature,
                                             "data": data
-                                        })
+                                        }, tenant_key=tenant_key)
         except Exception as e:
             print(f"Error watching files: {e}")
 

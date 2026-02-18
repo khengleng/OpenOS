@@ -7,7 +7,7 @@ import { Button } from "@/components/ui/button";
 import { useState } from "react";
 import { useSWRConfig } from "swr";
 
-const API_URL = process.env.NEXT_PUBLIC_CLAWWORK_API_URL || "https://clawwork-backend-production.up.railway.app";
+const API_BASE = "/api/clawwork";
 
 export interface Agent {
     signature: string;
@@ -34,11 +34,11 @@ export function AgentCard({ agent }: AgentCardProps) {
         if (!agent.simulation_id) return;
         setStopping(true);
         try {
-            const response = await fetch(`${API_URL}/api/simulations/${agent.simulation_id}/stop`, {
+            const response = await fetch(`${API_BASE}/simulations/${agent.simulation_id}/stop`, {
                 method: "POST"
             });
             if (response.ok) {
-                mutate(`${API_URL}/api/agents`);
+                mutate(`${API_BASE}/agents`);
             } else {
                 alert("Failed to stop agent");
             }

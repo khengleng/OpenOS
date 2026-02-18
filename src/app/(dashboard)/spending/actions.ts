@@ -6,14 +6,23 @@ import { revalidatePath } from 'next/cache'
 export async function addExpense(formData: FormData) {
     const supabase = await createClient()
 
-    const amount = parseFloat(formData.get('amount') as string)
-    const category = formData.get('category') as string
-    const description = formData.get('description') as string
+    const amount = parseFloat(String(formData.get('amount') || ''))
+    const category = String(formData.get('category') || '').trim()
+    const description = String(formData.get('description') || '').trim()
 
     const user = (await supabase.auth.getUser()).data.user
 
     if (!user) {
         return { error: 'Unauthorized' }
+    }
+    if (!Number.isFinite(amount) || amount <= 0 || amount > 1_000_000) {
+        return { error: 'Invalid amount' }
+    }
+    if (!category || category.length > 80) {
+        return { error: 'Invalid category' }
+    }
+    if (description.length > 1000) {
+        return { error: 'Description too long' }
     }
 
     const { error } = await supabase.from('expenses').insert({

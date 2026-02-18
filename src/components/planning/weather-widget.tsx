@@ -30,6 +30,10 @@ const getWeatherInfo = (code: number) => {
 // Default to user's approx location or fallback (e.g., New York)
 const DEFAULT_LAT = 40.7128
 const DEFAULT_LON = -74.0060
+const ROUNDING_PRECISION = 2
+
+const roundCoordinate = (value: number) =>
+    Number(value.toFixed(ROUNDING_PRECISION))
 
 export function WeatherWidget() {
     const [weather, setWeather] = useState<WeatherData | null>(null)
@@ -41,7 +45,10 @@ export function WeatherWidget() {
         if (navigator.geolocation) {
             navigator.geolocation.getCurrentPosition(
                 (position) => {
-                    fetchWeather(position.coords.latitude, position.coords.longitude)
+                    fetchWeather(
+                        roundCoordinate(position.coords.latitude),
+                        roundCoordinate(position.coords.longitude)
+                    )
                 },
                 (err) => {
                     console.warn("Geolocation denied/failed, using default.", err)

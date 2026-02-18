@@ -28,11 +28,17 @@ productivity/
 - **Output**: File on disk in sandboxed directory
 
 ### 3. execute_code (code_execution.py)
-- **Purpose**: Execute Python code in sandboxed environment
-- **Security**: 30s timeout, directory restrictions, no network access
-- **Output**: stdout, stderr, exit code
+- **Status**: Disabled (legacy local execution path)
+- **Purpose**: Returns an error directing callers to `execute_code_sandbox`
+- **Reason**: Prevent accidental use of non-isolated local execution
+- **Output**: Structured error response
 
-### 4. create_video (video_creation.py)
+### 4. execute_code_sandbox (code_execution_sandbox.py)
+- **Purpose**: Execute Python code in isolated E2B sandbox
+- **Security**: Remote isolation, session sandboxing, artifact download flow
+- **Output**: stdout/stderr plus downloaded artifact paths
+
+### 5. create_video (video_creation.py)
 - **Purpose**: Create videos from text/image slides
 - **Formats**: MP4 (H.264)
 - **Dependencies**: moviepy, imageio, imageio-ffmpeg

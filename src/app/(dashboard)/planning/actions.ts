@@ -6,11 +6,14 @@ import { revalidatePath } from 'next/cache'
 export async function addHabit(formData: FormData) {
     const supabase = await createClient()
 
-    const name = formData.get('name') as string
+    const name = String(formData.get('name') || '').trim()
     const user = (await supabase.auth.getUser()).data.user
 
     if (!user) {
         return { error: 'Unauthorized' }
+    }
+    if (!name || name.length > 120) {
+        return { error: 'Invalid habit name' }
     }
 
     const { error } = await supabase.from('habits').insert({
@@ -29,6 +32,14 @@ export async function addHabit(formData: FormData) {
 
 export async function toggleHabit(id: string, completed: boolean) {
     const supabase = await createClient()
+    const user = (await supabase.auth.getUser()).data.user
+
+    if (!user) {
+        return { error: 'Unauthorized' }
+    }
+    if (!id) {
+        return { error: 'Invalid habit id' }
+    }
 
     const today = new Date().toISOString().split('T')[0]
 
@@ -44,6 +55,7 @@ export async function toggleHabit(id: string, completed: boolean) {
         .from('habits')
         .update(updateData)
         .eq('id', id)
+        .eq('user_id', user.id)
 
     if (error) {
         return { error: 'Failed to update habit' }
@@ -54,6 +66,15 @@ export async function toggleHabit(id: string, completed: boolean) {
 
 export async function incrementStreak(id: string, currentStreak: number) {
     const supabase = await createClient()
+    const user = (await supabase.auth.getUser()).data.user
+
+    if (!user) {
+        return { error: 'Unauthorized' }
+    }
+    if (!id || !Number.isFinite(currentStreak) || currentStreak < 0) {
+        return { error: 'Invalid streak update' }
+    }
+
     const today = new Date().toISOString().split('T')[0]
 
     const { error } = await supabase
@@ -63,6 +84,7 @@ export async function incrementStreak(id: string, currentStreak: number) {
             streak_count: currentStreak + 1
         })
         .eq('id', id)
+        .eq('user_id', user.id)
 
     if (error) return { error: 'Failed' }
     revalidatePath('/planning')

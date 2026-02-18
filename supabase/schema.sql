@@ -13,7 +13,7 @@ create table profiles (
 
 -- RLS for Profiles
 alter table profiles enable row level security;
-create policy "Public profiles are viewable by everyone." on profiles for select using (true);
+create policy "Users can view their own profile." on profiles for select using (auth.uid() = id);
 create policy "Users can insert their own profile." on profiles for insert with check (auth.uid() = id);
 create policy "Users can update own profile." on profiles for update using (auth.uid() = id);
 
@@ -78,5 +78,5 @@ create table local_posts (
 
 -- RLS for Local Posts
 alter table local_posts enable row level security;
-create policy "Anyone can view local posts." on local_posts for select using (true);
+create policy "Authenticated users can view local posts." on local_posts for select using (auth.uid() is not null);
 create policy "Users can insert their own posts." on local_posts for insert with check (auth.uid() = user_id);
