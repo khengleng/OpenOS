@@ -289,6 +289,47 @@ async def root():
     }
 
 
+@app.get("/healthz")
+async def healthz():
+    """Liveness probe endpoint"""
+    return {
+        "status": "ok",
+        "service": "clawwork-api",
+        "ts": datetime.utcnow().isoformat() + "Z",
+    }
+
+
+@app.get("/readyz")
+async def readyz():
+    """Readiness probe endpoint"""
+    missing_env = []
+    if (REQUIRE_MUTATION_AUTH or REQUIRE_READ_AUTH) and not CLAWWORK_API_TOKEN:
+        missing_env.append("CLAWWORK_API_TOKEN")
+
+    tenants_writable = True
+    tenants_error = None
+    try:
+        TENANTS_ROOT.mkdir(parents=True, exist_ok=True)
+        probe = TENANTS_ROOT / ".write_probe"
+        probe.write_text("ok", encoding="utf-8")
+        probe.unlink(missing_ok=True)
+    except Exception as e:
+        tenants_writable = False
+        tenants_error = str(e)
+
+    ready = len(missing_env) == 0 and tenants_writable
+    return {
+        "ready": ready,
+        "service": "clawwork-api",
+        "missing_env": missing_env,
+        "tenants_root": str(TENANTS_ROOT),
+        "tenants_writable": tenants_writable,
+        "tenants_error": tenants_error,
+        "require_tenant_context": REQUIRE_TENANT_CONTEXT,
+        "ts": datetime.utcnow().isoformat() + "Z",
+    }
+
+
 class SimulationConfig(BaseModel):
     config: dict
     env_vars: Optional[Dict[str, str]] = None

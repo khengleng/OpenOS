@@ -83,6 +83,11 @@ Optional backwards compatibility:
 - Trigger deploys on merge to `main`.
 - Use Railway environment groups to share non-secret config safely.
 - Rotate `CLAWWORK_API_TOKEN` periodically.
+- Health endpoints:
+- OpenOS: `/api/health`, `/api/readiness`
+- ClawWork: `/healthz`, `/readyz`
+- Post-deploy smoke test:
+- `OPENOS_URL=https://<openos-domain> CLAWWORK_URL=https://<clawwork-domain> npm run smoke:railway`
 
 ## Local Development
 

@@ -6,7 +6,8 @@
     "dev": "next dev",
     "build": "next build --webpack",
     "start": "next start",
-    "lint": "eslint"
+    "lint": "eslint",
+    "smoke:railway": "bash scripts/smoke_test_railway.sh"
   },
   "dependencies": {
     "@supabase/ssr": "^0.8.0",
