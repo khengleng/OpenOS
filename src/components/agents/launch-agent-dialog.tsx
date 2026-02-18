@@ -20,6 +20,9 @@ export function LaunchAgentDialog() {
     const [agentName, setAgentName] = useState("New Agent");
     const [model, setModel] = useState("gpt-4o");
     const [initialBalance, setInitialBalance] = useState("10");
+    const [openAiKey, setOpenAiKey] = useState("");
+    const [e2bKey, setE2bKey] = useState("");
+
 
     const handleLaunch = async () => {
         setLoading(true);
@@ -65,7 +68,13 @@ export function LaunchAgentDialog() {
                 headers: {
                     "Content-Type": "application/json"
                 },
-                body: JSON.stringify({ config })
+                body: JSON.stringify({
+                    config,
+                    env_vars: {
+                        OPENAI_API_KEY: openAiKey,
+                        E2B_API_KEY: e2bKey
+                    }
+                })
             });
 
             if (!response.ok) {
@@ -137,6 +146,38 @@ export function LaunchAgentDialog() {
                             onChange={(e) => setInitialBalance(e.target.value)}
                             className="col-span-3"
                         />
+                    </div>
+
+                    <div className="border-t pt-4 mt-4">
+                        <Label className="mb-2 block font-semibold">API Configuration</Label>
+                        <div className="grid gap-4">
+                            <div className="grid grid-cols-4 items-center gap-4">
+                                <Label htmlFor="openai-key" className="text-right text-xs">
+                                    OpenAI Key
+                                </Label>
+                                <Input
+                                    id="openai-key"
+                                    type="password"
+                                    placeholder="sk-..."
+                                    value={openAiKey}
+                                    onChange={(e) => setOpenAiKey(e.target.value)}
+                                    className="col-span-3"
+                                />
+                            </div>
+                            <div className="grid grid-cols-4 items-center gap-4">
+                                <Label htmlFor="e2b-key" className="text-right text-xs">
+                                    E2B Key
+                                </Label>
+                                <Input
+                                    id="e2b-key"
+                                    type="password"
+                                    placeholder="e2b_..."
+                                    value={e2bKey}
+                                    onChange={(e) => setE2bKey(e.target.value)}
+                                    className="col-span-3"
+                                />
+                            </div>
+                        </div>
                     </div>
                 </div>
                 <DialogFooter>
