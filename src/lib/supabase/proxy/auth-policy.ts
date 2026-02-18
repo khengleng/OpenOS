@@ -1,7 +1,7 @@
 import { type NextRequest } from 'next/server'
 
 const LOGIN_PATH = '/login'
-const PUBLIC_PATH_PREFIXES = ['/auth', '/manifest', '/sw', '/workbox', '/icon-']
+const PUBLIC_PATH_PREFIXES = ['/auth', '/manifest', '/sw', '/workbox', '/icon-', '/api/health', '/api/readiness']
 
 export function shouldRedirectToLogin(request: NextRequest, hasUser: boolean): boolean {
     if (hasUser) return false
