@@ -1,0 +1,10 @@
+venv/
+.git/
+gdpval/
+node_modules/
+livebench/data/agent_data/
+frontend/node_modules/
+frontend/dist/
+__pycache__/
+*.pyc
+.DS_Store
