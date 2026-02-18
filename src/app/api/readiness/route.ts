@@ -1,16 +1,19 @@
 import { NextResponse } from "next/server";
 
+function getClawworkBaseUrl(): string {
+    return process.env.CLAWWORK_INTERNAL_URL || process.env.NEXT_PUBLIC_CLAWWORK_API_URL || "";
+}
+
 const REQUIRED_ENV_VARS = [
     "NEXT_PUBLIC_SUPABASE_URL",
     "NEXT_PUBLIC_SUPABASE_ANON_KEY",
-    "CLAWWORK_INTERNAL_URL",
     "CLAWWORK_API_TOKEN",
 ];
 
 async function checkClawworkReachability() {
-    const clawworkUrl = process.env.CLAWWORK_INTERNAL_URL || process.env.NEXT_PUBLIC_CLAWWORK_API_URL;
+    const clawworkUrl = getClawworkBaseUrl();
     if (!clawworkUrl) {
-        return { ok: false, error: "Missing CLAWWORK_INTERNAL_URL" };
+        return { ok: false, error: "Missing CLAWWORK_INTERNAL_URL or NEXT_PUBLIC_CLAWWORK_API_URL" };
     }
 
     const controller = new AbortController();
@@ -32,6 +35,9 @@ async function checkClawworkReachability() {
 
 export async function GET() {
     const missing = REQUIRED_ENV_VARS.filter((key) => !process.env[key]);
+    if (!getClawworkBaseUrl()) {
+        missing.push("CLAWWORK_INTERNAL_URL|NEXT_PUBLIC_CLAWWORK_API_URL");
+    }
     const clawwork = await checkClawworkReachability();
     const ready = missing.length === 0 && clawwork.ok;
 

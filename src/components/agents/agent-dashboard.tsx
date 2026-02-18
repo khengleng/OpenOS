@@ -7,10 +7,21 @@ import { AlertCircle, Loader2 } from "lucide-react";
 
 const API_BASE = "/api/clawwork";
 
-const fetcher = (url: string) => fetch(url).then((res) => {
-    if (!res.ok) throw new Error('API Error');
-    return res.json();
-});
+const fetcher = async (url: string) => {
+    const res = await fetch(url);
+    const payload = await res.text();
+    if (!res.ok) {
+        let detail = payload;
+        try {
+            const parsed = JSON.parse(payload) as { error?: string; detail?: string };
+            detail = parsed.detail || parsed.error || payload;
+        } catch {
+            // Best-effort parse only.
+        }
+        throw new Error(detail || `HTTP ${res.status}`);
+    }
+    return JSON.parse(payload);
+};
 
 export function AgentDashboard() {
     const { data, error, isLoading } = useSWR<{ agents: Agent[] }>(`${API_BASE}/agents`, fetcher, {
@@ -25,8 +36,11 @@ export function AgentDashboard() {
                     Error connecting to Agent Network
                 </div>
                 <p className="text-sm">
-                    Could not fetch agents. Ensure the backend is reachable from this app and `CLAWWORK_INTERNAL_URL` is configured.
+                    Could not fetch agents. Ensure the backend is reachable from this app and one of these is configured:
+                    `CLAWWORK_INTERNAL_URL` (same Railway project private network) or `NEXT_PUBLIC_CLAWWORK_API_URL`
+                    (public ClawWork URL for separate projects).
                 </p>
+                <p className="text-xs text-red-800 break-all">{String(error.message || "")}</p>
                 {/* Still verify we can launch even if list fails (maybe server just started empty?) - unlikely if fetch failed */}
                 <div className="flex gap-2">
                     <LaunchAgentDialog />
