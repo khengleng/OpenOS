@@ -1,7 +1,7 @@
 'use client'
 
 import { useState, useEffect } from 'react'
-import { Card, CardHeader, CardContent, CardTitle } from '@/components/ui/card'
+import { Card, CardContent } from '@/components/ui/card'
 import { Cloud, Sun, CloudRain, CloudSnow, CloudLightning, Wind } from 'lucide-react'
 
 // Simple OpenMeteo types
@@ -61,8 +61,8 @@ export function WeatherWidget() {
             if (!response.ok) throw new Error('Failed to fetch weather')
             const data = await response.json()
             setWeather(data)
-        } catch (err: any) {
-            setError(err.message)
+        } catch (err: unknown) {
+            setError(err instanceof Error ? err.message : "Failed to fetch weather")
         } finally {
             setLoading(false)
         }

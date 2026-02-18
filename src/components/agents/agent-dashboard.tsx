@@ -1,0 +1,76 @@
+"use client";
+
+import useSWR from "swr";
+import { Agent, AgentCard } from "./agent-card";
+import { LaunchAgentDialog } from "./launch-agent-dialog";
+import { AlertCircle, Loader2 } from "lucide-react";
+
+const API_URL = process.env.NEXT_PUBLIC_CLAWWORK_API_URL || "https://clawwork-backend-production.up.railway.app";
+
+const fetcher = (url: string) => fetch(url).then((res) => {
+    if (!res.ok) throw new Error('API Error');
+    return res.json();
+});
+
+export function AgentDashboard() {
+    const { data, error, isLoading } = useSWR<{ agents: Agent[] }>(`${API_URL}/api/agents`, fetcher, {
+        refreshInterval: 5000 // Poll every 5 seconds
+    });
+
+    if (error) {
+        return (
+            <div className="p-4 border border-red-200 bg-red-50 rounded-lg text-red-900 space-y-4">
+                <div className="flex items-center gap-2 font-semibold">
+                    <AlertCircle className="h-4 w-4" />
+                    Error connecting to Agent Network
+                </div>
+                <p className="text-sm">
+                    Could not fetch agents. Ensure the backend is running at {API_URL}.
+                </p>
+                {/* Still verify we can launch even if list fails (maybe server just started empty?) - unlikely if fetch failed */}
+                <div className="flex gap-2">
+                    <LaunchAgentDialog />
+                </div>
+            </div>
+        );
+    }
+
+    if (isLoading) {
+        return (
+            <div className="space-y-4">
+                <div className="flex justify-end">
+                    <div className="h-10 w-32 bg-gray-200 rounded animate-pulse" />
+                </div>
+                <div className="flex h-[200px] items-center justify-center">
+                    <Loader2 className="h-8 w-8 animate-spin text-muted-foreground" />
+                </div>
+            </div>
+        );
+    }
+
+    const agents = data?.agents || [];
+
+    return (
+        <div className="space-y-4">
+            <div className="flex justify-end">
+                <LaunchAgentDialog />
+            </div>
+
+            {agents.length === 0 ? (
+                <div className="flex flex-col items-center justify-center p-12 border border-dashed rounded-lg bg-muted/20">
+                    <h3 className="text-lg font-medium mb-2">No active agents</h3>
+                    <p className="text-muted-foreground mb-6 text-center max-w-md">
+                        Your workspace is empty. Hire your first AI coworker to start completing tasks.
+                    </p>
+                    <LaunchAgentDialog />
+                </div>
+            ) : (
+                <div className="grid gap-4 sm:grid-cols-2 lg:grid-cols-3 xl:grid-cols-4">
+                    {agents.map((agent) => (
+                        <AgentCard key={agent.signature} agent={agent} />
+                    ))}
+                </div>
+            )}
+        </div>
+    );
+}

@@ -1,10 +1,9 @@
 'use client'
 
 import { useState } from 'react'
-import { Card, CardHeader, CardContent, CardTitle, CardFooter } from '@/components/ui/card'
-import { Check, Flame, Plus } from 'lucide-react'
+import { Card } from '@/components/ui/card'
+import { Check, Flame } from 'lucide-react'
 import { Button } from '@/components/ui/button'
-import { Input } from '@/components/ui/input'
 import { incrementStreak } from '@/app/(dashboard)/planning/actions'
 
 interface Habit {

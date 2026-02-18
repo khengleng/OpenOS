@@ -2,15 +2,15 @@
 
 import Link from "next/link";
 import { usePathname } from "next/navigation";
-import { cn } from "@/lib/utils";
 import { Button } from "@/components/ui/button";
-import { Calendar, Wallet, Users, Activity, Settings, LogOut } from "lucide-react";
+import { Calendar, Wallet, Users, Activity, Settings, LogOut, Bot } from "lucide-react";
 
 const sidebarItems = [
     { name: "Planning", href: "/planning", icon: Calendar },
     { name: "Spending", href: "/spending", icon: Wallet },
     { name: "Community", href: "/community", icon: Users },
     { name: "Wellness", href: "/wellness", icon: Activity },
+    { name: "Agents", href: "/agents", icon: Bot },
 ];
 
 export function Sidebar() {

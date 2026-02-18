@@ -1,5 +1,5 @@
 import { createClient } from '@/lib/supabase/server'
-import { Card, CardHeader, CardContent, CardTitle, CardDescription } from '@/components/ui/card'
+import { Card, CardHeader, CardContent, CardTitle } from '@/components/ui/card'
 import { AddExpenseDialog } from '@/components/spending/add-expense-dialog'
 
 export default async function SpendingPage() {
