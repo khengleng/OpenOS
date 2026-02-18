@@ -1,7 +1,8 @@
 'use client'
 
-import { useActionState } from 'react'
+import { Suspense, useActionState } from 'react'
 import Link from "next/link";
+import { useSearchParams } from 'next/navigation'
 import {
     Card,
     CardContent,
@@ -20,8 +21,11 @@ const initialState = {
     error: '',
 }
 
-export default function LoginPage() {
+function LoginForm() {
     const [state, formAction] = useActionState(login, initialState)
+    const searchParams = useSearchParams()
+    const checkEmail = searchParams.get('check_email') === '1'
+    const callbackError = searchParams.get('error')
 
     return (
         <div className="flex justify-center items-center h-full">
@@ -34,6 +38,14 @@ export default function LoginPage() {
                         </CardDescription>
                     </CardHeader>
                     <CardContent className="grid gap-4">
+                        {checkEmail && (
+                            <p className="text-sm text-blue-600">
+                                Check your email and click the confirmation link to activate your account.
+                            </p>
+                        )}
+                        {callbackError && (
+                            <p className="text-sm text-red-500">{callbackError}</p>
+                        )}
                         <div className="grid gap-2">
                             <Label htmlFor="email">Email</Label>
                             <Input id="email" name="email" type="email" placeholder="m@example.com" required />
@@ -59,4 +71,12 @@ export default function LoginPage() {
             </Card>
         </div>
     );
+}
+
+export default function LoginPage() {
+    return (
+        <Suspense fallback={null}>
+            <LoginForm />
+        </Suspense>
+    )
 }
