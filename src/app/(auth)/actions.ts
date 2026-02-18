@@ -27,7 +27,7 @@ export async function login(prevState: AuthActionState, formData: FormData) {
     redirect('/planning')
 }
 
-export async function signup(formData: FormData) {
+export async function signup(prevState: AuthActionState, formData: FormData) {
     const supabase = await createClient()
 
     const email = formData.get('email') as string

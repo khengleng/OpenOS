@@ -1,13 +1,14 @@
 import { type NextRequest } from 'next/server'
 
 const LOGIN_PATH = '/login'
+const REGISTER_PATH = '/register'
 const PUBLIC_PATH_PREFIXES = ['/auth', '/manifest', '/sw', '/workbox', '/icon-', '/api/health', '/api/readiness']
 
 export function shouldRedirectToLogin(request: NextRequest, hasUser: boolean): boolean {
     if (hasUser) return false
 
     const { pathname } = request.nextUrl
-    if (pathname === '/' || pathname === LOGIN_PATH) return false
+    if (pathname === '/' || pathname === LOGIN_PATH || pathname === REGISTER_PATH) return false
 
     return !PUBLIC_PATH_PREFIXES.some((prefix) => pathname.startsWith(prefix))
 }
