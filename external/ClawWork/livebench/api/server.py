@@ -69,7 +69,11 @@ ALLOWED_ENV_VAR_KEYS = set(
 )
 
 if (REQUIRE_MUTATION_AUTH or REQUIRE_READ_AUTH) and not CLAWWORK_API_TOKEN:
-    raise RuntimeError("API auth is enabled but CLAWWORK_API_TOKEN is not configured")
+    print(
+        "WARNING: API auth is enabled but CLAWWORK_API_TOKEN is not configured; "
+        "read/write endpoints will deny requests until token is set.",
+        file=sys.stderr,
+    )
 
 _rate_limit_buckets: Dict[str, Deque[float]] = {}
 TENANT_HEADER = "x-tenant-id"
