@@ -1,5 +1,6 @@
 import { createClient } from '@/lib/supabase/server'
 import { SettingsForm } from './settings-form'
+import { OnboardingStatus } from './onboarding-status'
 
 export default async function SettingsPage() {
     const supabase = await createClient()
@@ -16,6 +17,7 @@ export default async function SettingsPage() {
     return (
         <div className="space-y-4">
             <h2 className="text-3xl font-bold tracking-tight">Settings</h2>
+            <OnboardingStatus displayName={displayName} timezone={timezone} />
             <SettingsForm
                 email={user?.email || ''}
                 displayName={displayName}
