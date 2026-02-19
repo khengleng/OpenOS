@@ -4,6 +4,8 @@ import useSWR from "swr";
 import { Agent, AgentCard } from "./agent-card";
 import { LaunchAgentDialog } from "./launch-agent-dialog";
 import { AlertCircle, Loader2 } from "lucide-react";
+import { Card, CardContent, CardHeader, CardTitle } from "@/components/ui/card";
+import { Badge } from "@/components/ui/badge";
 
 const API_BASE = "/api/clawwork";
 type Simulation = {
@@ -11,6 +13,21 @@ type Simulation = {
     status: string;
     signature?: string;
     start_time?: string;
+};
+
+const statusBadgeClass = (status: string) => {
+    if (status === "running") return "bg-green-100 text-green-800 border-green-200";
+    if (status === "stopped") return "bg-amber-100 text-amber-800 border-amber-200";
+    if (status === "terminated") return "bg-red-100 text-red-800 border-red-200";
+    return "bg-muted text-muted-foreground";
+};
+
+const normalizeStatus = (status?: string) => (status || "unknown").toLowerCase();
+const formatWhen = (value?: string) => {
+    if (!value) return "n/a";
+    const date = new Date(value);
+    if (Number.isNaN(date.getTime())) return "n/a";
+    return date.toLocaleString();
 };
 
 const fetcher = async (url: string) => {
@@ -72,8 +89,14 @@ export function AgentDashboard() {
     }
 
     const agents = data?.agents || [];
-    const simulations = simulationsData?.simulations || [];
+    const simulations = [...(simulationsData?.simulations || [])].sort((a, b) => {
+        const aTime = new Date(a.start_time || 0).getTime();
+        const bTime = new Date(b.start_time || 0).getTime();
+        return bTime - aTime;
+    });
     const runningSimulations = simulations.filter((sim) => sim.status === "running");
+    const stoppedCount = simulations.filter((sim) => normalizeStatus(sim.status) === "stopped").length;
+    const terminatedCount = simulations.filter((sim) => normalizeStatus(sim.status) === "terminated").length;
     const existingSimulationIds = new Set(
         agents.map((agent) => agent.simulation_id).filter(Boolean) as string[]
     );
@@ -93,35 +116,44 @@ export function AgentDashboard() {
     const visibleAgents = [...agents, ...simulationAgents];
 
     return (
-        <div className="space-y-4">
+        <div className="space-y-6">
             <div className="flex justify-end">
                 <LaunchAgentDialog />
+            </div>
+
+            <div className="grid gap-4 sm:grid-cols-2 xl:grid-cols-4">
+                <Card>
+                    <CardHeader className="pb-2">
+                        <CardTitle className="text-sm font-medium">Active Agents</CardTitle>
+                    </CardHeader>
+                    <CardContent className="text-2xl font-semibold">{visibleAgents.length}</CardContent>
+                </Card>
+                <Card>
+                    <CardHeader className="pb-2">
+                        <CardTitle className="text-sm font-medium">Running Simulations</CardTitle>
+                    </CardHeader>
+                    <CardContent className="text-2xl font-semibold">{runningSimulations.length}</CardContent>
+                </Card>
+                <Card>
+                    <CardHeader className="pb-2">
+                        <CardTitle className="text-sm font-medium">Stopped</CardTitle>
+                    </CardHeader>
+                    <CardContent className="text-2xl font-semibold">{stoppedCount}</CardContent>
+                </Card>
+                <Card>
+                    <CardHeader className="pb-2">
+                        <CardTitle className="text-sm font-medium">Terminated</CardTitle>
+                    </CardHeader>
+                    <CardContent className="text-2xl font-semibold">{terminatedCount}</CardContent>
+                </Card>
             </div>
 
             {visibleAgents.length === 0 ? (
                 <div className="flex flex-col items-center justify-center p-12 border border-dashed rounded-lg bg-muted/20">
                     <h3 className="text-lg font-medium mb-2">No active agents</h3>
                     <p className="text-muted-foreground mb-6 text-center max-w-md">
-                        Your workspace is empty. Hire your first AI coworker to start completing tasks.
+                        No simulations are currently running. Start a new AI coworker to begin work.
                     </p>
-                    {simulations.length > 0 && (
-                        <div className="w-full max-w-2xl mb-6 rounded-md border bg-background p-4 text-left">
-                            <p className="text-sm font-medium mb-2">
-                                Launch activity ({runningSimulations.length} running / {simulations.length} total)
-                            </p>
-                            <div className="max-h-44 overflow-auto space-y-2">
-                                {simulations.slice(0, 20).map((sim) => (
-                                    <div key={sim.id} className="text-xs text-muted-foreground border rounded px-2 py-1">
-                                        <span className="font-medium text-foreground">{sim.signature || "Unnamed Agent"}</span>
-                                        {" · "}
-                                        <span>{sim.status}</span>
-                                        {" · "}
-                                        <span>{sim.id}</span>
-                                    </div>
-                                ))}
-                            </div>
-                        </div>
-                    )}
                     <LaunchAgentDialog />
                 </div>
             ) : (
@@ -131,6 +163,42 @@ export function AgentDashboard() {
                     ))}
                 </div>
             )}
+
+            <Card>
+                <CardHeader>
+                    <CardTitle>Launch Activity</CardTitle>
+                </CardHeader>
+                <CardContent>
+                    {simulations.length === 0 ? (
+                        <p className="text-sm text-muted-foreground">No launches yet.</p>
+                    ) : (
+                        <div className="space-y-2">
+                            {simulations.slice(0, 20).map((sim) => {
+                                const status = normalizeStatus(sim.status);
+                                return (
+                                    <div
+                                        key={sim.id}
+                                        className="grid grid-cols-1 gap-2 rounded-md border p-3 text-sm md:grid-cols-[1fr_auto_auto]"
+                                    >
+                                        <div className="min-w-0">
+                                            <p className="truncate font-medium">{sim.signature || "Unnamed Agent"}</p>
+                                            <p className="truncate text-xs text-muted-foreground">{sim.id}</p>
+                                        </div>
+                                        <div className="flex items-center">
+                                            <Badge variant="outline" className={statusBadgeClass(status)}>
+                                                {status}
+                                            </Badge>
+                                        </div>
+                                        <p className="text-xs text-muted-foreground md:text-right">
+                                            {formatWhen(sim.start_time)}
+                                        </p>
+                                    </div>
+                                );
+                            })}
+                        </div>
+                    )}
+                </CardContent>
+            </Card>
         </div>
     );
 }
