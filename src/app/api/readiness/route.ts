@@ -15,7 +15,7 @@ function getClawworkBaseUrl(): string {
 const REQUIRED_ENV_VARS = [
     "NEXT_PUBLIC_SUPABASE_URL",
     "NEXT_PUBLIC_SUPABASE_ANON_KEY",
-    "CLAWWORK_API_TOKEN",
+    "CLAWWORK_JWT_SECRET",
 ];
 
 async function checkClawworkReachability() {

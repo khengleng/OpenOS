@@ -1,4 +1,5 @@
 import { NextRequest, NextResponse } from "next/server";
+import { SignJWT } from "jose";
 
 function getRawClawworkBaseUrl(): string {
     return (process.env.CLAWWORK_INTERNAL_URL || process.env.NEXT_PUBLIC_CLAWWORK_API_URL || "").trim();
@@ -13,6 +14,28 @@ function normalizeBaseUrl(raw: string): string {
 
 const CLAWWORK_INTERNAL_URL = normalizeBaseUrl(getRawClawworkBaseUrl());
 const CLAWWORK_API_TOKEN = process.env.CLAWWORK_API_TOKEN;
+const CLAWWORK_JWT_SECRET = process.env.CLAWWORK_JWT_SECRET;
+const CLAWWORK_JWT_ISSUER = (process.env.CLAWWORK_JWT_ISSUER || "").trim();
+const CLAWWORK_JWT_AUDIENCE = (process.env.CLAWWORK_JWT_AUDIENCE || "").trim();
+const CLAWWORK_JWT_ALGORITHMS = (process.env.CLAWWORK_JWT_ALGORITHMS || "HS256")
+    .split(",")
+    .map((alg) => alg.trim())
+    .filter(Boolean);
+const CLAWWORK_JWT_SIGNING_ALG = CLAWWORK_JWT_ALGORITHMS[0] || "HS256";
+
+async function generateClawworkJwt(tenantId: string): Promise<string> {
+    if (!CLAWWORK_JWT_SECRET) return "";
+
+    const secret = new TextEncoder().encode(CLAWWORK_JWT_SECRET);
+    // Sign a fresh token for this request sequence.
+    let tokenBuilder = new SignJWT({ tenant_id: tenantId }).setProtectedHeader({ alg: CLAWWORK_JWT_SIGNING_ALG });
+    if (CLAWWORK_JWT_ISSUER) tokenBuilder = tokenBuilder.setIssuer(CLAWWORK_JWT_ISSUER);
+    if (CLAWWORK_JWT_AUDIENCE) tokenBuilder = tokenBuilder.setAudience(CLAWWORK_JWT_AUDIENCE);
+    return await tokenBuilder
+        .setIssuedAt()
+        .setExpirationTime("10m") // Short lived token for single request proxying
+        .sign(secret);
+}
 
 function buildUpstreamUrl(pathname: string): URL {
     if (!CLAWWORK_INTERNAL_URL) {
@@ -39,9 +62,26 @@ export async function proxyClawworkRequest(
         if (contentType) {
             headers.set("content-type", contentType);
         }
-        if (CLAWWORK_API_TOKEN) {
+
+        // Tenant-scoped auth requires JWT in production-secure ClawWork deployments.
+        if (tenantId && !CLAWWORK_JWT_SECRET) {
+            return NextResponse.json(
+                {
+                    error: "ClawWork auth misconfigured",
+                    detail:
+                        "Missing CLAWWORK_JWT_SECRET in OpenOS service. Set the same JWT secret in OpenOS and ClawWork.",
+                },
+                { status: 500 },
+            );
+        }
+
+        if (tenantId && CLAWWORK_JWT_SECRET) {
+            const jwt = await generateClawworkJwt(tenantId);
+            headers.set("authorization", `Bearer ${jwt}`);
+        } else if (CLAWWORK_API_TOKEN) {
             headers.set("authorization", `Bearer ${CLAWWORK_API_TOKEN}`);
         }
+
         if (tenantId) {
             headers.set("x-tenant-id", tenantId);
         }
