@@ -21,11 +21,13 @@ type CoworkerTask = {
     priority: TaskPriority;
     assigned_agent?: string | null;
     result_summary?: string | null;
+    history?: Array<Record<string, unknown>>;
     created_at: string;
     updated_at: string;
 };
 
 type AgentRecord = { signature: string };
+type SimulationRecord = { id: string; status?: string; start_time?: string; end_time?: string };
 
 const fetcher = async <T,>(url: string): Promise<T> => {
     const res = await fetch(url);
@@ -54,6 +56,9 @@ export function CoworkerTaskBoard() {
     const { data: agentsData } = useSWR<{ agents: AgentRecord[] }>("/api/clawwork/agents", fetcher, {
         refreshInterval: 15000,
     });
+    const { data: simulationsData } = useSWR<{ simulations: SimulationRecord[] }>("/api/clawwork/simulations", fetcher, {
+        refreshInterval: 6000,
+    });
 
     const [title, setTitle] = useState("");
     const [description, setDescription] = useState("");
@@ -61,6 +66,7 @@ export function CoworkerTaskBoard() {
     const [assignedAgent, setAssignedAgent] = useState("__unassigned");
     const [resultDraft, setResultDraft] = useState<Record<string, string>>({});
     const [submitting, setSubmitting] = useState(false);
+    const [runningTaskId, setRunningTaskId] = useState<string | null>(null);
     const [message, setMessage] = useState<string>("");
 
     const tasks = data?.tasks || [];
@@ -116,6 +122,43 @@ export function CoworkerTaskBoard() {
         const txt = await res.text();
         if (!res.ok) throw new Error(txt || "Update failed");
         await mutate();
+    }
+
+    async function runTask(id: string) {
+        setRunningTaskId(id);
+        setMessage("");
+        try {
+            const res = await fetch(`/api/coworker/tasks/${encodeURIComponent(id)}/run`, {
+                method: "POST",
+            });
+            const txt = await res.text();
+            if (!res.ok) throw new Error(txt || "Failed to run task");
+            setMessage("Task launched.");
+            await mutate();
+        } catch (err) {
+            setMessage(err instanceof Error ? err.message : "Failed to run task");
+        } finally {
+            setRunningTaskId(null);
+        }
+    }
+
+    const simulationsById = useMemo(() => {
+        const map = new Map<string, SimulationRecord>();
+        for (const simulation of simulationsData?.simulations || []) {
+            if (simulation.id) map.set(simulation.id, simulation);
+        }
+        return map;
+    }, [simulationsData]);
+
+    function latestSimulationId(task: CoworkerTask): string | null {
+        const entries = Array.isArray(task.history) ? [...task.history].reverse() : [];
+        for (const entry of entries) {
+            const simulationId = entry && typeof entry === "object" && "simulation_id" in entry
+                ? String((entry as { simulation_id?: unknown }).simulation_id || "")
+                : "";
+            if (simulationId) return simulationId;
+        }
+        return null;
     }
 
     return (
@@ -206,17 +249,38 @@ export function CoworkerTaskBoard() {
                     ) : null}
                     {tasks.map((task) => (
                         <div key={task.id} className="rounded-md border p-3 space-y-2">
-                            <div className="flex items-center justify-between gap-2">
-                                <p className="font-medium truncate">{task.title}</p>
-                                <div className="flex gap-2">
-                                    <Badge variant="outline">{statusLabel[task.status]}</Badge>
-                                    <Badge className={priorityClass[task.priority]}>{task.priority}</Badge>
-                                </div>
-                            </div>
+                            {(() => {
+                                const simId = latestSimulationId(task);
+                                const sim = simId ? simulationsById.get(simId) : null;
+                                const simulationStatus = sim?.status ? String(sim.status) : null;
+                                return (
+                                    <div className="flex items-center justify-between gap-2">
+                                        <p className="font-medium truncate">{task.title}</p>
+                                        <div className="flex gap-2">
+                                            <Badge variant="outline">{statusLabel[task.status]}</Badge>
+                                            <Badge className={priorityClass[task.priority]}>{task.priority}</Badge>
+                                            {simulationStatus ? (
+                                                <Badge variant="secondary">{simulationStatus}</Badge>
+                                            ) : null}
+                                        </div>
+                                    </div>
+                                );
+                            })()}
                             {task.description ? <p className="text-sm text-muted-foreground">{task.description}</p> : null}
                             <p className="text-xs text-muted-foreground">
                                 Agent: {task.assigned_agent || "Unassigned"} | Updated {new Date(task.updated_at).toLocaleString()}
                             </p>
+                            {(() => {
+                                const simId = latestSimulationId(task);
+                                if (!simId) return null;
+                                const sim = simulationsById.get(simId);
+                                return (
+                                    <p className="text-xs text-muted-foreground">
+                                        Last simulation: {simId}
+                                        {sim?.status ? ` (${sim.status})` : ""}
+                                    </p>
+                                );
+                            })()}
                             {task.result_summary ? (
                                 <p className="text-sm rounded bg-muted p-2">
                                     <span className="font-medium">Result:</span> {task.result_summary}
@@ -234,6 +298,14 @@ export function CoworkerTaskBoard() {
                                 </Button>
                                 <Button size="sm" onClick={() => patchTask(task.id, { status: "done" })}>
                                     Complete
+                                </Button>
+                                <Button
+                                    size="sm"
+                                    variant="secondary"
+                                    disabled={runningTaskId === task.id}
+                                    onClick={() => runTask(task.id)}
+                                >
+                                    {runningTaskId === task.id ? "Launching..." : "Run Task"}
                                 </Button>
                             </div>
                             <div className="flex gap-2">
