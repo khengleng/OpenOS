@@ -57,8 +57,20 @@ export async function proxyClawworkRequest(
         });
 
         const responseBody = await upstreamResponse.text();
+        const upstreamContentType = upstreamResponse.headers.get("content-type") || "";
+        const isHtmlNotFound = upstreamResponse.status === 404 && upstreamContentType.includes("text/html");
+        if (isHtmlNotFound) {
+            return NextResponse.json(
+                {
+                    error: "ClawWork upstream misconfigured",
+                    detail:
+                        "Received HTML 404 from upstream. Check NEXT_PUBLIC_CLAWWORK_API_URL/CLAWWORK_INTERNAL_URL points to ClawWork API service, not OpenOS/frontend.",
+                },
+                { status: 502 },
+            );
+        }
+
         const responseHeaders = new Headers();
-        const upstreamContentType = upstreamResponse.headers.get("content-type");
         if (upstreamContentType) {
             responseHeaders.set("content-type", upstreamContentType);
         }

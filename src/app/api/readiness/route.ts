@@ -28,13 +28,23 @@ async function checkClawworkReachability() {
     const timeout = setTimeout(() => controller.abort(), 5000);
 
     try {
-        const healthUrl = new URL("/", clawworkUrl);
-        const response = await fetch(healthUrl, {
+        const healthzUrl = new URL("/healthz", clawworkUrl);
+        const healthz = await fetch(healthzUrl, {
             method: "GET",
             cache: "no-store",
             signal: controller.signal,
         });
-        return { ok: response.ok, status: response.status };
+        if (healthz.ok) {
+            return { ok: true, status: healthz.status, endpoint: "/healthz" };
+        }
+
+        const readyzUrl = new URL("/readyz", clawworkUrl);
+        const readyz = await fetch(readyzUrl, {
+            method: "GET",
+            cache: "no-store",
+            signal: controller.signal,
+        });
+        return { ok: readyz.ok, status: readyz.status, endpoint: "/readyz" };
     } catch (error) {
         return { ok: false, error: error instanceof Error ? error.message : "Unknown error" };
     } finally {
