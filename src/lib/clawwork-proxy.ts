@@ -1,14 +1,28 @@
 import { NextRequest, NextResponse } from "next/server";
 
-const CLAWWORK_INTERNAL_URL =
-    process.env.CLAWWORK_INTERNAL_URL || process.env.NEXT_PUBLIC_CLAWWORK_API_URL;
+function getRawClawworkBaseUrl(): string {
+    return (process.env.CLAWWORK_INTERNAL_URL || process.env.NEXT_PUBLIC_CLAWWORK_API_URL || "").trim();
+}
+
+function normalizeBaseUrl(raw: string): string {
+    if (!raw) return "";
+    const unquoted = raw.replace(/^['"]|['"]$/g, "");
+    if (/^https?:\/\//i.test(unquoted)) return unquoted;
+    return `https://${unquoted}`;
+}
+
+const CLAWWORK_INTERNAL_URL = normalizeBaseUrl(getRawClawworkBaseUrl());
 const CLAWWORK_API_TOKEN = process.env.CLAWWORK_API_TOKEN;
 
 function buildUpstreamUrl(pathname: string): URL {
     if (!CLAWWORK_INTERNAL_URL) {
         throw new Error("Missing CLAWWORK_INTERNAL_URL or NEXT_PUBLIC_CLAWWORK_API_URL");
     }
-    return new URL(pathname, CLAWWORK_INTERNAL_URL);
+    try {
+        return new URL(pathname, CLAWWORK_INTERNAL_URL);
+    } catch {
+        throw new Error("Invalid ClawWork base URL. Expected full URL like https://example.up.railway.app");
+    }
 }
 
 export async function proxyClawworkRequest(

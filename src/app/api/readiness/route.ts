@@ -1,7 +1,15 @@
 import { NextResponse } from "next/server";
 
+function normalizeBaseUrl(raw: string): string {
+    const value = (raw || "").trim();
+    if (!value) return "";
+    const unquoted = value.replace(/^['"]|['"]$/g, "");
+    if (/^https?:\/\//i.test(unquoted)) return unquoted;
+    return `https://${unquoted}`;
+}
+
 function getClawworkBaseUrl(): string {
-    return process.env.CLAWWORK_INTERNAL_URL || process.env.NEXT_PUBLIC_CLAWWORK_API_URL || "";
+    return normalizeBaseUrl(process.env.CLAWWORK_INTERNAL_URL || process.env.NEXT_PUBLIC_CLAWWORK_API_URL || "");
 }
 
 const REQUIRED_ENV_VARS = [
@@ -20,7 +28,8 @@ async function checkClawworkReachability() {
     const timeout = setTimeout(() => controller.abort(), 5000);
 
     try {
-        const response = await fetch(new URL("/", clawworkUrl), {
+        const healthUrl = new URL("/", clawworkUrl);
+        const response = await fetch(healthUrl, {
             method: "GET",
             cache: "no-store",
             signal: controller.signal,
