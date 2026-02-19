@@ -29,7 +29,16 @@ import tempfile
 import uuid
 import sys
 
-app = FastAPI(title="LiveBench API", version="1.0.0")
+from contextlib import asynccontextmanager
+
+@asynccontextmanager
+async def lifespan(app: FastAPI):
+    # Start background tasks
+    asyncio.create_task(watch_agent_files())
+    yield
+    # Clean up (if needed)
+
+app = FastAPI(title="LiveBench API", version="1.0.0", lifespan=lifespan)
 
 
 def _parse_csv_env(name: str, default: str) -> List[str]:
@@ -37,7 +46,7 @@ def _parse_csv_env(name: str, default: str) -> List[str]:
     return [item.strip() for item in raw.split(",") if item.strip()]
 
 
-_DEFAULT_CORS_ORIGINS = "http://localhost:3000,http://127.0.0.1:3000"
+_DEFAULT_CORS_ORIGINS = "http://localhost:3000,http://127.0.0.1:3000,https://nexus-os-production.up.railway.app"
 ALLOWED_CORS_ORIGINS = _parse_csv_env("CLAWWORK_CORS_ORIGINS", _DEFAULT_CORS_ORIGINS)
 
 app.add_middleware(
@@ -45,7 +54,7 @@ app.add_middleware(
     allow_origins=ALLOWED_CORS_ORIGINS,
     allow_credentials=True,
     allow_methods=["GET", "POST", "PUT", "OPTIONS"],
-    allow_headers=["Authorization", "Content-Type", "X-ClawWork-Token"],
+    allow_headers=["Authorization", "Content-Type", "X-ClawWork-Token", "x-tenant-id"],
 )
 
 CLAWWORK_ENV = os.getenv("CLAWWORK_ENV", "development").strip().lower()
@@ -1182,11 +1191,6 @@ async def watch_agent_files():
 
         await asyncio.sleep(1)  # Check every second
 
-
-@app.on_event("startup")
-async def startup_event():
-    """Start background tasks on startup"""
-    asyncio.create_task(watch_agent_files())
 
 
 if __name__ == "__main__":
