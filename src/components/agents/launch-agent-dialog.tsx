@@ -12,13 +12,14 @@ import { useSWRConfig } from "swr";
 const API_BASE = "/api/clawwork";
 
 export function LaunchAgentDialog() {
+    const suggestAgentName = () => `agent-${Date.now().toString().slice(-6)}`;
     const [open, setOpen] = useState(false);
     const [loading, setLoading] = useState(false);
     const [errorMessage, setErrorMessage] = useState("");
     const { mutate } = useSWRConfig();
 
     // Form state
-    const [agentName, setAgentName] = useState("New Agent");
+    const [agentName, setAgentName] = useState(suggestAgentName());
     const [model, setModel] = useState("gpt-4o");
     const [initialBalance, setInitialBalance] = useState("10");
 
@@ -27,6 +28,22 @@ export function LaunchAgentDialog() {
         setErrorMessage("");
         setLoading(true);
         try {
+            const signature = agentName.trim();
+            if (!signature) {
+                throw new Error("Agent name is required.");
+            }
+
+            const existingRes = await fetch(`${API_BASE}/agents`);
+            if (existingRes.ok) {
+                const existingJson = await existingRes.json() as { agents?: Array<{ signature?: string }> };
+                const exists = (existingJson.agents || []).some(
+                    (agent) => (agent.signature || "").toLowerCase() === signature.toLowerCase()
+                );
+                if (exists) {
+                    throw new Error("An agent with this name already exists. Choose a different name.");
+                }
+            }
+
             const config = {
                 livebench: {
                     date_range: {
@@ -42,7 +59,7 @@ export function LaunchAgentDialog() {
                     },
                     agents: [
                         {
-                            signature: agentName,
+                            signature,
                             basemodel: model,
                             enabled: true,
                             tasks_per_day: 1,
@@ -86,6 +103,8 @@ export function LaunchAgentDialog() {
             }
 
             mutate(`${API_BASE}/agents`);
+            mutate(`${API_BASE}/simulations`);
+            setAgentName(suggestAgentName());
             setOpen(false);
         } catch (error) {
             console.error("Error launching agent:", error);
@@ -98,7 +117,14 @@ export function LaunchAgentDialog() {
     return (
         <Dialog open={open} onOpenChange={setOpen}>
             <DialogTrigger asChild>
-                <Button type="button" onClick={() => setOpen(true)}>
+                <Button
+                    type="button"
+                    onClick={() => {
+                        setErrorMessage("");
+                        setAgentName(suggestAgentName());
+                        setOpen(true);
+                    }}
+                >
                     <Plus className="mr-2 h-4 w-4" />
                     Hire New Agent
                 </Button>
