@@ -13,10 +13,17 @@ type Simulation = {
     status: string;
     signature?: string;
     start_time?: string;
+    end_time?: string;
     model?: string;
     termination_hint?: string;
     stop_reason?: string;
     retry_count?: number;
+};
+type RunNotification = {
+    id: string;
+    level: "info" | "warn" | "error" | "success";
+    message: string;
+    ts: string;
 };
 
 const statusBadgeClass = (status: string) => {
@@ -58,41 +65,6 @@ export function AgentDashboard() {
     const { data: simulationsData } = useSWR<{ simulations: Simulation[] }>(`${API_BASE}/simulations`, fetcher, {
         refreshInterval: 5000 // Poll every 5 seconds
     });
-
-    if (error) {
-        return (
-            <div className="p-4 border border-red-200 bg-red-50 rounded-lg text-red-900 space-y-4">
-                <div className="flex items-center gap-2 font-semibold">
-                    <AlertCircle className="h-4 w-4" />
-                    Error connecting to Agent Network
-                </div>
-                <p className="text-sm">
-                    Could not fetch agents. Ensure the backend is reachable from this app and one of these is configured:
-                    `CLAWWORK_INTERNAL_URL` (same Railway project private network) or `NEXT_PUBLIC_CLAWWORK_API_URL`
-                    (public ClawWork URL for separate projects).
-                </p>
-                <p className="text-xs text-red-800 break-all">{String(error.message || "")}</p>
-                {/* Still verify we can launch even if list fails (maybe server just started empty?) - unlikely if fetch failed */}
-                <div className="flex gap-2">
-                    <LaunchAgentDialog />
-                </div>
-            </div>
-        );
-    }
-
-    if (isLoading) {
-        return (
-            <div className="space-y-4">
-                <div className="flex justify-end">
-                    <div className="h-10 w-32 bg-gray-200 rounded animate-pulse" />
-                </div>
-                <div className="flex h-[200px] items-center justify-center">
-                    <Loader2 className="h-8 w-8 animate-spin text-muted-foreground" />
-                </div>
-            </div>
-        );
-    }
-
     const agents = data?.agents || [];
     const simulations = [...(simulationsData?.simulations || [])].sort((a, b) => {
         const aTime = new Date(a.start_time || 0).getTime();
@@ -100,6 +72,7 @@ export function AgentDashboard() {
         return bTime - aTime;
     });
     const runningSimulations = simulations.filter((sim) => sim.status === "running");
+
     const completedCount = simulations.filter((sim) => normalizeStatus(sim.status) === "completed").length;
     const stoppedCount = simulations.filter((sim) => normalizeStatus(sim.status) === "stopped").length;
     const terminatedCount = simulations.filter((sim) => normalizeStatus(sim.status) === "terminated").length;
@@ -121,6 +94,91 @@ export function AgentDashboard() {
             model: sim.model,
         }));
     const visibleAgents = [...agents, ...simulationAgents];
+    const notifications: RunNotification[] = simulations.slice(0, 8).map((sim) => {
+        const status = normalizeStatus(sim.status);
+        if (status === "completed") {
+            return {
+                id: `${sim.id}:completed`,
+                level: "success",
+                message: `${sim.signature || "Agent"} completed successfully.`,
+                ts: sim.end_time || sim.start_time || new Date().toISOString(),
+            };
+        }
+        if (status === "stopped") {
+            return {
+                id: `${sim.id}:stopped`,
+                level: "warn",
+                message: sim.stop_reason
+                    ? `${sim.signature || "Agent"} stopped: ${sim.stop_reason}`
+                    : `${sim.signature || "Agent"} was stopped.`,
+                ts: sim.end_time || sim.start_time || new Date().toISOString(),
+            };
+        }
+        if (status === "terminated") {
+            return {
+                id: `${sim.id}:terminated`,
+                level: "error",
+                message: sim.termination_hint
+                    ? `${sim.signature || "Agent"} failed: ${sim.termination_hint}`
+                    : `${sim.signature || "Agent"} terminated unexpectedly.`,
+                ts: sim.end_time || sim.start_time || new Date().toISOString(),
+            };
+        }
+        if ((sim.retry_count || 0) > 0) {
+            return {
+                id: `${sim.id}:restarted`,
+                level: "warn",
+                message: `${sim.signature || "Agent"} auto-restarted (retry ${sim.retry_count}).`,
+                ts: sim.start_time || new Date().toISOString(),
+            };
+        }
+        return {
+            id: `${sim.id}:running`,
+            level: "info",
+            message: `${sim.signature || "Agent"} is running.`,
+            ts: sim.start_time || new Date().toISOString(),
+        };
+    });
+
+    const notifClass = (level: RunNotification["level"]) => {
+        if (level === "error") return "border-red-200 bg-red-50 text-red-800";
+        if (level === "warn") return "border-amber-200 bg-amber-50 text-amber-800";
+        if (level === "success") return "border-green-200 bg-green-50 text-green-800";
+        return "border-blue-200 bg-blue-50 text-blue-800";
+    };
+
+    if (error) {
+        return (
+            <div className="p-4 border border-red-200 bg-red-50 rounded-lg text-red-900 space-y-4">
+                <div className="flex items-center gap-2 font-semibold">
+                    <AlertCircle className="h-4 w-4" />
+                    Error connecting to Agent Network
+                </div>
+                <p className="text-sm">
+                    Could not fetch agents. Ensure the backend is reachable from this app and one of these is configured:
+                    `CLAWWORK_INTERNAL_URL` (same Railway project private network) or `NEXT_PUBLIC_CLAWWORK_API_URL`
+                    (public ClawWork URL for separate projects).
+                </p>
+                <p className="text-xs text-red-800 break-all">{String(error.message || "")}</p>
+                <div className="flex gap-2">
+                    <LaunchAgentDialog />
+                </div>
+            </div>
+        );
+    }
+
+    if (isLoading) {
+        return (
+            <div className="space-y-4">
+                <div className="flex justify-end">
+                    <div className="h-10 w-32 bg-gray-200 rounded animate-pulse" />
+                </div>
+                <div className="flex h-[200px] items-center justify-center">
+                    <Loader2 className="h-8 w-8 animate-spin text-muted-foreground" />
+                </div>
+            </div>
+        );
+    }
 
     return (
         <div className="space-y-6">
@@ -154,6 +212,26 @@ export function AgentDashboard() {
                     <CardContent className="text-2xl font-semibold">{stoppedCount + terminatedCount}</CardContent>
                 </Card>
             </div>
+
+            <Card>
+                <CardHeader>
+                    <CardTitle>Run Notifications</CardTitle>
+                </CardHeader>
+                <CardContent>
+                    {notifications.length === 0 ? (
+                        <p className="text-sm text-muted-foreground">No recent run events yet.</p>
+                    ) : (
+                        <div className="space-y-2">
+                            {notifications.map((item) => (
+                                <div key={item.id} className={`rounded-md border px-3 py-2 text-sm ${notifClass(item.level)}`}>
+                                    <div className="font-medium">{item.message}</div>
+                                    <div className="text-xs opacity-80">{formatWhen(item.ts)}</div>
+                                </div>
+                            ))}
+                        </div>
+                    )}
+                </CardContent>
+            </Card>
 
             {visibleAgents.length === 0 ? (
                 <div className="flex flex-col items-center justify-center p-12 border border-dashed rounded-lg bg-muted/20">

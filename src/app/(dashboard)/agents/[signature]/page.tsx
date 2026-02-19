@@ -26,14 +26,27 @@ type AgentDetails = {
         balance_history_points: number;
     };
 };
+type SimulationsResponse = {
+    simulations: Array<{
+        id: string;
+        signature?: string;
+        status?: string;
+        model?: string;
+        retry_count?: number;
+        termination_hint?: string;
+        stop_reason?: string;
+        start_time?: string;
+        end_time?: string;
+    }>;
+};
 
-const fetcher = async (url: string) => {
+const fetcher = async <T,>(url: string): Promise<T> => {
     const res = await fetch(url);
     const payload = await res.text();
     if (!res.ok) {
         throw new Error(payload || `HTTP ${res.status}`);
     }
-    return JSON.parse(payload) as AgentDetails;
+    return JSON.parse(payload) as T;
 };
 
 export default function AgentDetailsPage() {
@@ -41,6 +54,11 @@ export default function AgentDetailsPage() {
     const signature = decodeURIComponent(params.signature);
     const { data, error, isLoading } = useSWR<AgentDetails>(
         `/api/clawwork/agents/${encodeURIComponent(signature)}`,
+        fetcher,
+        { refreshInterval: 5000 },
+    );
+    const { data: simData } = useSWR<SimulationsResponse>(
+        "/api/clawwork/simulations",
         fetcher,
         { refreshInterval: 5000 },
     );
@@ -76,6 +94,9 @@ export default function AgentDetailsPage() {
 
     const status = data.current_status;
     const fmtMoney = (value: number) => `$${(Number(value) || 0).toFixed(2)}`;
+    const latestSimulation = (simData?.simulations || [])
+        .filter((sim) => (sim.signature || "").trim() === data.signature)
+        .sort((a, b) => new Date(b.start_time || 0).getTime() - new Date(a.start_time || 0).getTime())[0];
 
     return (
         <div className="space-y-6 p-8">
@@ -112,6 +133,36 @@ export default function AgentDetailsPage() {
                     <p><span className="font-medium">Decisions:</span> {data.stats.total_decisions}</p>
                     <p><span className="font-medium">Evaluations:</span> {data.stats.total_evaluations}</p>
                     <p><span className="font-medium">Balance Points:</span> {data.stats.balance_history_points}</p>
+                </CardContent>
+            </Card>
+
+            <Card>
+                <CardHeader>
+                    <CardTitle>Latest Simulation</CardTitle>
+                </CardHeader>
+                <CardContent className="space-y-2 text-sm">
+                    {latestSimulation ? (
+                        <>
+                            <p><span className="font-medium">Simulation ID:</span> {latestSimulation.id}</p>
+                            <p><span className="font-medium">Status:</span> {latestSimulation.status || "unknown"}</p>
+                            <p><span className="font-medium">Model:</span> {latestSimulation.model || "n/a"}</p>
+                            <p><span className="font-medium">Retries:</span> {latestSimulation.retry_count || 0}</p>
+                            <p><span className="font-medium">Started:</span> {latestSimulation.start_time || "n/a"}</p>
+                            <p><span className="font-medium">Ended:</span> {latestSimulation.end_time || "n/a"}</p>
+                            {latestSimulation.stop_reason ? (
+                                <p className="text-amber-700">
+                                    <span className="font-medium">Stop Reason:</span> {latestSimulation.stop_reason}
+                                </p>
+                            ) : null}
+                            {latestSimulation.termination_hint ? (
+                                <p className="text-red-700">
+                                    <span className="font-medium">Termination Hint:</span> {latestSimulation.termination_hint}
+                                </p>
+                            ) : null}
+                        </>
+                    ) : (
+                        <p className="text-muted-foreground">No simulation records found for this agent yet.</p>
+                    )}
                 </CardContent>
             </Card>
         </div>
