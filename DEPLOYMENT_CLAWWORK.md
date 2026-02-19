@@ -38,7 +38,10 @@ Recommended security settings:
 - `CLAWWORK_REQUIRE_AUTH=true`
 - `CLAWWORK_REQUIRE_READ_AUTH=true`
 - `CLAWWORK_REQUIRE_TENANT_CONTEXT=true`
-- `CLAWWORK_API_TOKEN=<strong-random-token>`
+- `CLAWWORK_LEGACY_TOKEN_FALLBACK=false`
+- `CLAWWORK_JWT_SECRET=<strong-random-secret>`
+- `CLAWWORK_JWT_ALGORITHMS=HS256`
+- `CLAWWORK_API_TOKEN=<legacy-fallback-token-optional>`
 - `CLAWWORK_CORS_ORIGINS=https://<your-openos-domain>`
 - `CLAWWORK_ALLOWED_ENV_KEYS=OPENAI_API_KEY,E2B_API_KEY,WEB_SEARCH_API_KEY,ANTHROPIC_API_KEY`
 - `CLAWWORK_RATE_LIMIT_ENABLED=true`
@@ -56,7 +59,11 @@ Required for proxy:
 - `CLAWWORK_INTERNAL_URL=http(s)://<clawwork-internal-or-public-url>`
 
 If backend auth is enabled:
-- `CLAWWORK_API_TOKEN=<same-token-as-backend>`
+- `CLAWWORK_JWT_SECRET=<same-secret-as-backend>`
+- `CLAWWORK_JWT_ALGORITHMS=HS256`
+- `CLAWWORK_API_TOKEN=<same-token-as-backend-for-legacy-fallback>`
+
+**Important:** In production, ClawWork (FastAPI) strictly requires JWT auth. Ensure both services share the same `CLAWWORK_JWT_SECRET`.
 
 Recommended proxy throttling:
 - `CLAWWORK_PROXY_RATE_LIMIT_WINDOW_SEC=60`
