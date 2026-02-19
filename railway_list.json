@@ -1,0 +1,158 @@
+[
+  {
+    "workspace": {
+      "id": "4c8f6378-2b15-4631-a53f-570cfe840082",
+      "name": "Acid Test"
+    },
+    "id": "0a47de58-b2d8-4b27-9dd8-cab74994f71d",
+    "name": "ClawWork Backend",
+    "createdAt": "2026-02-18T13:14:45.661Z",
+    "updatedAt": "2026-02-18T14:48:43.273Z",
+    "deletedAt": null,
+    "environments": {
+      "edges": [
+        {
+          "node": {
+            "id": "27eacbe0-1c07-4363-8800-b69e94b1d3e5",
+            "name": "production",
+            "canAccess": true,
+            "serviceInstances": {
+              "edges": [
+                {
+                  "node": {
+                    "serviceId": "9f4035e7-086f-4536-9c60-8a2bb9a51f5c"
+                  }
+                }
+              ]
+            }
+          }
+        }
+      ]
+    },
+    "services": {
+      "edges": [
+        {
+          "node": {
+            "id": "9f4035e7-086f-4536-9c60-8a2bb9a51f5c",
+            "name": "ClawWork Backend"
+          }
+        }
+      ]
+    }
+  },
+  {
+    "workspace": {
+      "id": "4c8f6378-2b15-4631-a53f-570cfe840082",
+      "name": "Acid Test"
+    },
+    "id": "ec7df7ab-265f-4c12-a22c-a4a4dbf91367",
+    "name": "Nexus OS",
+    "createdAt": "2026-02-12T08:16:49.956Z",
+    "updatedAt": "2026-02-18T14:26:00.727Z",
+    "deletedAt": null,
+    "environments": {
+      "edges": [
+        {
+          "node": {
+            "id": "1470f19f-04c0-4d18-8d36-28b751e2cef3",
+            "name": "production",
+            "canAccess": true,
+            "serviceInstances": {
+              "edges": [
+                {
+                  "node": {
+                    "serviceId": "122e22fe-694f-4349-bd1e-a8c8bd335435"
+                  }
+                }
+              ]
+            }
+          }
+        }
+      ]
+    },
+    "services": {
+      "edges": [
+        {
+          "node": {
+            "id": "122e22fe-694f-4349-bd1e-a8c8bd335435",
+            "name": "Nexus OS"
+          }
+        }
+      ]
+    }
+  },
+  {
+    "workspace": {
+      "id": "4c8f6378-2b15-4631-a53f-570cfe840082",
+      "name": "Acid Test"
+    },
+    "id": "ab57e56e-0928-4c69-9559-fdf1128839f1",
+    "name": "CamboBia",
+    "createdAt": "2026-02-04T06:31:39.581Z",
+    "updatedAt": "2026-02-15T14:18:33.747Z",
+    "deletedAt": null,
+    "environments": {
+      "edges": [
+        {
+          "node": {
+            "id": "e6f129df-cd4f-493c-ae8d-94f7ee20a216",
+            "name": "production",
+            "canAccess": true,
+            "serviceInstances": {
+              "edges": [
+                {
+                  "node": {
+                    "serviceId": "23de7ee6-5c5f-4c25-84a2-af7d1baa9b7c"
+                  }
+                },
+                {
+                  "node": {
+                    "serviceId": "3bdf82b7-0a80-40a6-940c-dfb1262d1045"
+                  }
+                },
+                {
+                  "node": {
+                    "serviceId": "0fe6d5b3-3368-4b9b-8e0d-ccaeb0ba4800"
+                  }
+                },
+                {
+                  "node": {
+                    "serviceId": "a8939003-ba83-4328-8b2c-b8448b94a87b"
+                  }
+                }
+              ]
+            }
+          }
+        }
+      ]
+    },
+    "services": {
+      "edges": [
+        {
+          "node": {
+            "id": "0fe6d5b3-3368-4b9b-8e0d-ccaeb0ba4800",
+            "name": "Frontend"
+          }
+        },
+        {
+          "node": {
+            "id": "23de7ee6-5c5f-4c25-84a2-af7d1baa9b7c",
+            "name": "Postgres"
+          }
+        },
+        {
+          "node": {
+            "id": "3bdf82b7-0a80-40a6-940c-dfb1262d1045",
+            "name": "Redis"
+          }
+        },
+        {
+          "node": {
+            "id": "a8939003-ba83-4328-8b2c-b8448b94a87b",
+            "name": "Backend"
+          }
+        }
+      ]
+    }
+  }
+]
