@@ -576,13 +576,50 @@ async def get_agents(request: Request, _: None = Depends(require_read_auth)):
     tenant_paths = _get_tenant_paths(request)
     data_path = tenant_paths["data_path"]
     simulations_path = tenant_paths["simulations_path"]
+    running_simulations: Dict[str, dict] = {}
+
+    if simulations_path.exists():
+        try:
+            with open(simulations_path, "r") as f:
+                simulations = json.load(f)
+            for sim in simulations:
+                if sim.get("status") != "running":
+                    continue
+                signature = (sim.get("signature") or "").strip()
+                if not signature:
+                    continue
+                try:
+                    os.kill(sim["pid"], 0)
+                    running_simulations[signature] = sim
+                except OSError:
+                    # Ignore stale process entries.
+                    continue
+        except Exception:
+            running_simulations = {}
 
     if not data_path.exists():
-        return {"agents": []}
+        return {
+            "agents": [
+                {
+                    "signature": signature,
+                    "balance": 0,
+                    "net_worth": 0,
+                    "survival_status": "unknown",
+                    "current_activity": "Starting simulation",
+                    "current_date": None,
+                    "total_token_cost": 0,
+                    "is_running": True,
+                    "simulation_id": sim.get("id"),
+                }
+                for signature, sim in running_simulations.items()
+            ]
+        }
 
+    seen_signatures = set()
     for agent_dir in data_path.iterdir():
         if agent_dir.is_dir():
             signature = agent_dir.name
+            seen_signatures.add(signature)
 
             # Get latest balance
             balance_file = agent_dir / "economic" / "balance.jsonl"
@@ -605,39 +642,39 @@ async def get_agents(request: Request, _: None = Depends(require_read_auth)):
                         current_activity = decision.get("activity")
                         current_date = decision.get("date")
 
+            sim = running_simulations.get(signature)
+            is_running = sim is not None
+            sim_id = sim.get("id") if sim else None
 
-            # Check if running
-            is_running = False
-            sim_id = None
-            if simulations_path.exists():
-                try:
-                    with open(simulations_path, 'r') as f:
-                        simulations = json.load(f)
-                    for sim in simulations:
-                        if sim.get("signature") == signature and sim.get("status") == "running":
-                            # Verify PID
-                            try:
-                                os.kill(sim["pid"], 0)
-                                is_running = True
-                                sim_id = sim["id"]
-                                break
-                            except OSError:
-                                pass # Stale entry
-                except:
-                    pass
-
-            if balance_data:
+            if balance_data or is_running:
                 agents.append({
                     "signature": signature,
-                    "balance": balance_data.get("balance", 0),
-                    "net_worth": balance_data.get("net_worth", 0),
-                    "survival_status": balance_data.get("survival_status", "unknown"),
-                    "current_activity": current_activity,
+                    "balance": (balance_data or {}).get("balance", 0),
+                    "net_worth": (balance_data or {}).get("net_worth", 0),
+                    "survival_status": (balance_data or {}).get("survival_status", "unknown"),
+                    "current_activity": current_activity or ("Starting simulation" if is_running else None),
                     "current_date": current_date,
-                    "total_token_cost": balance_data.get("total_token_cost", 0),
+                    "total_token_cost": (balance_data or {}).get("total_token_cost", 0),
                     "is_running": is_running,
                     "simulation_id": sim_id
                 })
+
+    for signature, sim in running_simulations.items():
+        if signature in seen_signatures:
+            continue
+        agents.append(
+            {
+                "signature": signature,
+                "balance": 0,
+                "net_worth": 0,
+                "survival_status": "unknown",
+                "current_activity": "Starting simulation",
+                "current_date": None,
+                "total_token_cost": 0,
+                "is_running": True,
+                "simulation_id": sim.get("id"),
+            }
+        )
 
     return {"agents": agents}
 

@@ -6,6 +6,12 @@ import { LaunchAgentDialog } from "./launch-agent-dialog";
 import { AlertCircle, Loader2 } from "lucide-react";
 
 const API_BASE = "/api/clawwork";
+type Simulation = {
+    id: string;
+    status: string;
+    signature?: string;
+    start_time?: string;
+};
 
 const fetcher = async (url: string) => {
     const res = await fetch(url);
@@ -25,6 +31,9 @@ const fetcher = async (url: string) => {
 
 export function AgentDashboard() {
     const { data, error, isLoading } = useSWR<{ agents: Agent[] }>(`${API_BASE}/agents`, fetcher, {
+        refreshInterval: 5000 // Poll every 5 seconds
+    });
+    const { data: simulationsData } = useSWR<{ simulations: Simulation[] }>(`${API_BASE}/simulations`, fetcher, {
         refreshInterval: 5000 // Poll every 5 seconds
     });
 
@@ -63,6 +72,8 @@ export function AgentDashboard() {
     }
 
     const agents = data?.agents || [];
+    const simulations = simulationsData?.simulations || [];
+    const runningSimulations = simulations.filter((sim) => sim.status === "running");
 
     return (
         <div className="space-y-4">
@@ -76,6 +87,24 @@ export function AgentDashboard() {
                     <p className="text-muted-foreground mb-6 text-center max-w-md">
                         Your workspace is empty. Hire your first AI coworker to start completing tasks.
                     </p>
+                    {simulations.length > 0 && (
+                        <div className="w-full max-w-2xl mb-6 rounded-md border bg-background p-4 text-left">
+                            <p className="text-sm font-medium mb-2">
+                                Launch activity ({runningSimulations.length} running / {simulations.length} total)
+                            </p>
+                            <div className="max-h-44 overflow-auto space-y-2">
+                                {simulations.slice(0, 20).map((sim) => (
+                                    <div key={sim.id} className="text-xs text-muted-foreground border rounded px-2 py-1">
+                                        <span className="font-medium text-foreground">{sim.signature || "Unnamed Agent"}</span>
+                                        {" · "}
+                                        <span>{sim.status}</span>
+                                        {" · "}
+                                        <span>{sim.id}</span>
+                                    </div>
+                                ))}
+                            </div>
+                        </div>
+                    )}
                     <LaunchAgentDialog />
                 </div>
             ) : (
