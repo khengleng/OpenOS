@@ -1,7 +1,7 @@
 "use client";
 
 import { useState } from "react";
-import { Dialog, DialogContent, DialogDescription, DialogFooter, DialogHeader, DialogTitle } from "@/components/ui/dialog";
+import { Dialog, DialogContent, DialogDescription, DialogFooter, DialogHeader, DialogTitle, DialogTrigger } from "@/components/ui/dialog";
 import { Button } from "@/components/ui/button";
 import { Input } from "@/components/ui/input";
 import { Label } from "@/components/ui/label";
@@ -97,10 +97,12 @@ export function LaunchAgentDialog() {
 
     return (
         <Dialog open={open} onOpenChange={setOpen}>
-            <Button onClick={() => setOpen(true)}>
-                <Plus className="mr-2 h-4 w-4" />
-                Hire New Agent
-            </Button>
+            <DialogTrigger asChild>
+                <Button type="button" onClick={() => setOpen(true)}>
+                    <Plus className="mr-2 h-4 w-4" />
+                    Hire New Agent
+                </Button>
+            </DialogTrigger>
             <DialogContent className="sm:max-w-[425px]">
                 <DialogHeader>
                     <DialogTitle>Hire New AI Coworker</DialogTitle>
@@ -153,7 +155,7 @@ export function LaunchAgentDialog() {
                     )}
                 </div>
                 <DialogFooter>
-                    <Button onClick={handleLaunch} disabled={loading}>
+                    <Button type="button" onClick={handleLaunch} disabled={loading}>
                         {loading ? "Launching..." : "Launch Agent"}
                     </Button>
                 </DialogFooter>
