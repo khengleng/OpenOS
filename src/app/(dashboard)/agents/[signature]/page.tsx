@@ -10,7 +10,7 @@ import { ArrowLeft, Loader2 } from "lucide-react";
 
 type AgentDetails = {
     signature: string;
-    current_status: {
+    current_status?: {
         balance: number;
         net_worth: number;
         survival_status: string;
@@ -20,11 +20,14 @@ type AgentDetails = {
         current_date?: string;
         avg_evaluation_score?: number | null;
     };
-    stats: {
+    stats?: {
         total_decisions: number;
         total_evaluations: number;
         balance_history_points: number;
     };
+    decisions?: unknown[];
+    evaluation_scores?: unknown[];
+    balance_history?: unknown[];
 };
 type SimulationsResponse = {
     simulations: Array<{
@@ -92,7 +95,21 @@ export default function AgentDetailsPage() {
         );
     }
 
-    const status = data.current_status;
+    const status = data.current_status ?? {
+        balance: 0,
+        net_worth: 0,
+        survival_status: "unknown",
+        total_token_cost: 0,
+        total_work_income: 0,
+        current_activity: undefined,
+        current_date: undefined,
+        avg_evaluation_score: null,
+    };
+    const stats = data.stats ?? {
+        total_decisions: Array.isArray(data.decisions) ? data.decisions.length : 0,
+        total_evaluations: Array.isArray(data.evaluation_scores) ? data.evaluation_scores.length : 0,
+        balance_history_points: Array.isArray(data.balance_history) ? data.balance_history.length : 0,
+    };
     const fmtMoney = (value: number) => `$${(Number(value) || 0).toFixed(2)}`;
     const latestSimulation = (simData?.simulations || [])
         .filter((sim) => (sim.signature || "").trim() === data.signature)
@@ -130,9 +147,9 @@ export default function AgentDetailsPage() {
                     <CardTitle>Agent Stats</CardTitle>
                 </CardHeader>
                 <CardContent className="grid gap-3 text-sm md:grid-cols-3">
-                    <p><span className="font-medium">Decisions:</span> {data.stats.total_decisions}</p>
-                    <p><span className="font-medium">Evaluations:</span> {data.stats.total_evaluations}</p>
-                    <p><span className="font-medium">Balance Points:</span> {data.stats.balance_history_points}</p>
+                    <p><span className="font-medium">Decisions:</span> {stats.total_decisions}</p>
+                    <p><span className="font-medium">Evaluations:</span> {stats.total_evaluations}</p>
+                    <p><span className="font-medium">Balance Points:</span> {stats.balance_history_points}</p>
                 </CardContent>
             </Card>
 
