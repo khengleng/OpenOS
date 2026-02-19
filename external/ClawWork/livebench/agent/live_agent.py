@@ -12,6 +12,10 @@ from pathlib import Path
 
 from langchain_mcp_adapters.client import MultiServerMCPClient
 from langchain_openai import ChatOpenAI
+try:
+    from langchain_anthropic import ChatAnthropic
+except ImportError:
+    ChatAnthropic = None
 from dotenv import load_dotenv
 
 # Import LiveBench components
@@ -160,7 +164,7 @@ class LiveAgent:
         # MCP and AI components
         self.client: Optional[MultiServerMCPClient] = None
         self.tools: Optional[List] = None
-        self.model: Optional[ChatOpenAI] = None
+        self.model: Optional[Any] = None
         self.agent: Optional[Any] = None
 
         # Daily state
@@ -220,14 +224,28 @@ class LiveAgent:
             trust_env=False
         )
 
-        self.model = ChatOpenAI(
-            model=self.basemodel,
-            base_url=self.openai_base_url,
-            max_retries=3,
-            timeout=60,
-            http_client=http_client_sync,
-            http_async_client=http_client_async
-        )
+        model_name = self.basemodel.strip()
+        is_anthropic_model = model_name.startswith("claude-") or model_name.startswith("anthropic/")
+
+        if is_anthropic_model:
+            if ChatAnthropic is None:
+                raise RuntimeError("Anthropic model selected but langchain-anthropic is not installed")
+
+            resolved_model = model_name.removeprefix("anthropic/")
+            self.model = ChatAnthropic(
+                model=resolved_model,
+                max_retries=3,
+                timeout=60,
+            )
+        else:
+            self.model = ChatOpenAI(
+                model=model_name,
+                base_url=self.openai_base_url,
+                max_retries=3,
+                timeout=60,
+                http_client=http_client_sync,
+                http_async_client=http_client_async
+            )
 
         print(f"✅ LiveAgent {self.signature} initialization completed")
 

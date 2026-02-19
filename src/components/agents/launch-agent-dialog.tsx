@@ -16,8 +16,8 @@ const PROVIDER_MODELS = {
         { label: "GPT-4 Turbo", value: "gpt-4-turbo" },
     ],
     anthropic: [
-        { label: "Claude 3.5 Sonnet", value: "anthropic/claude-3.5-sonnet" },
-        { label: "Claude 3 Opus", value: "anthropic/claude-3-opus" },
+        { label: "Claude 3.5 Sonnet", value: "claude-3-5-sonnet-latest" },
+        { label: "Claude 3 Opus", value: "claude-3-opus-20240229" },
     ],
 } as const;
 type Provider = keyof typeof PROVIDER_MODELS;
