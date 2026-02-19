@@ -72,8 +72,15 @@ export function LaunchAgentDialog() {
             });
 
             if (!response.ok) {
-                const errorData = await response.json().catch(() => ({ detail: "Unknown error" }));
-                throw new Error(errorData.detail || "Failed to launch agent");
+                const raw = await response.text();
+                let detail = raw;
+                try {
+                    const parsed = JSON.parse(raw) as { detail?: string; error?: string };
+                    detail = parsed.detail || parsed.error || raw;
+                } catch {
+                    // keep raw response body as detail
+                }
+                throw new Error(detail || `Request failed (${response.status})`);
             }
 
             mutate(`${API_BASE}/agents`);
