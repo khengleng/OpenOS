@@ -12,6 +12,16 @@ function isValidPriority(value: string): value is TaskPriority {
     return ["low", "medium", "high"].includes(value);
 }
 
+function isMissingCoworkerTableError(error: unknown): boolean {
+    const code = typeof error === "object" && error !== null && "code" in error
+        ? String((error as { code?: unknown }).code || "")
+        : "";
+    const message = typeof error === "object" && error !== null && "message" in error
+        ? String((error as { message?: unknown }).message || "")
+        : "";
+    return code === "42P01" || /coworker_tasks/i.test(message);
+}
+
 export async function PATCH(
     request: NextRequest,
     context: { params: Promise<{ id: string }> },
@@ -34,6 +44,12 @@ export async function PATCH(
         .single();
 
     if (existingError || !existing) {
+        if (isMissingCoworkerTableError(existingError)) {
+            return NextResponse.json(
+                { error: "Coworker task table not found. Run Supabase schema migration first." },
+                { status: 503 },
+            );
+        }
         return NextResponse.json({ error: "Task not found" }, { status: 404 });
     }
 
@@ -90,6 +106,12 @@ export async function PATCH(
         .single();
 
     if (error) {
+        if (isMissingCoworkerTableError(error)) {
+            return NextResponse.json(
+                { error: "Coworker task table not found. Run Supabase schema migration first." },
+                { status: 503 },
+            );
+        }
         return NextResponse.json({ error: "Failed to update task" }, { status: 500 });
     }
 
