@@ -1,4 +1,6 @@
 import { Card, CardContent, CardHeader, CardTitle } from '@/components/ui/card'
+import { Badge } from '@/components/ui/badge'
+import { Button } from '@/components/ui/button'
 import { Activity, Footprints, Heart, Flame } from 'lucide-react'
 
 export default function WellnessPage() {
@@ -42,14 +44,31 @@ export default function WellnessPage() {
                 </Card>
             </div>
 
-            <div className="rounded-lg border bg-card text-card-foreground shadow-sm p-6 text-center">
-                <Activity className="mx-auto h-12 w-12 text-muted-foreground mb-4" />
-                <h3 className="text-lg font-medium">Apple Health Sync Disabled</h3>
-                <p className="text-sm text-muted-foreground mb-4">Connect your device to sync real-time data.</p>
-                <button disabled className="inline-flex items-center justify-center whitespace-nowrap rounded-md text-sm font-medium ring-offset-background transition-colors focus-visible:outline-none focus-visible:ring-2 focus-visible:ring-ring focus-visible:ring-offset-2 disabled:pointer-events-none disabled:opacity-50 bg-primary text-primary-foreground hover:bg-primary/90 h-10 px-4 py-2">
-                    Coming Soon
-                </button>
-            </div>
+            <Card>
+                <CardHeader className="flex flex-row items-start justify-between">
+                    <div className="space-y-1">
+                        <CardTitle>Apple Health Sync Disabled</CardTitle>
+                        <p className="text-sm text-muted-foreground">
+                            Connect your device to sync real-time data.
+                        </p>
+                    </div>
+                    <Badge variant="secondary">Disabled</Badge>
+                </CardHeader>
+                <CardContent className="space-y-4">
+                    <div className="rounded-md border border-dashed p-4 text-sm text-muted-foreground">
+                        Apple Health integration is not enabled on this deployment yet. Activity metrics are currently
+                        shown from sample data.
+                    </div>
+                    <div className="flex items-center gap-3">
+                        <Button disabled>Coming Soon</Button>
+                        <span className="text-xs text-muted-foreground">Feature flag pending secure device handshake.</span>
+                    </div>
+                    <div className="flex items-center gap-2 text-xs text-muted-foreground">
+                        <Activity className="h-3.5 w-3.5" />
+                        Once enabled, sync runs continuously in the background.
+                    </div>
+                </CardContent>
+            </Card>
         </div>
     );
 }
