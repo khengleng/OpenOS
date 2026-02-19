@@ -1195,5 +1195,5 @@ async def watch_agent_files():
 
 if __name__ == "__main__":
     import uvicorn
-    port = int(os.getenv("PORT", "8000"))
-    uvicorn.run(app, host="0.0.0.0", port=port)
+    # Hardcode to 8000 to match Railway targetPort settings
+    uvicorn.run(app, host="0.0.0.0", port=8000)
