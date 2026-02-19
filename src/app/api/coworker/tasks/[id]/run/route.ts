@@ -3,6 +3,7 @@ import { SignJWT } from "jose";
 import { createClient } from "@/lib/supabase/server";
 
 type TaskStatus = "todo" | "in_progress" | "blocked" | "done";
+type LaunchAuthMode = "jwt" | "token" | "none";
 
 function isMissingCoworkerTableError(error: unknown): boolean {
     const code = typeof error === "object" && error !== null && "code" in error
@@ -157,25 +158,59 @@ export async function POST(
     try {
         const url = new URL("/api/simulations", clawworkBase);
         const headers = new Headers({ "content-type": "application/json", "x-tenant-id": user.id });
-        const jwt = await generateTenantJwt(user.id);
-        if (jwt) {
-            headers.set("authorization", `Bearer ${jwt}`);
-        } else {
-            const apiToken = (process.env.CLAWWORK_API_TOKEN || "").trim();
-            if (apiToken) headers.set("authorization", `Bearer ${apiToken}`);
+        const apiToken = (process.env.CLAWWORK_API_TOKEN || "").trim();
+
+        const applyLaunchAuth = async (preferredMode: LaunchAuthMode): Promise<LaunchAuthMode> => {
+            headers.delete("authorization");
+            if (preferredMode === "jwt") {
+                const jwt = await generateTenantJwt(user.id);
+                if (jwt) {
+                    headers.set("authorization", `Bearer ${jwt}`);
+                    return "jwt";
+                }
+            }
+            if (apiToken) {
+                headers.set("authorization", `Bearer ${apiToken}`);
+                return "token";
+            }
+            return "none";
+        };
+
+        const sendLaunch = async () =>
+            fetch(url, {
+                method: "POST",
+                headers,
+                body: JSON.stringify({ config }),
+                cache: "no-store",
+            });
+
+        let authMode = await applyLaunchAuth("jwt");
+        let launchResponse = await sendLaunch();
+        if (
+            authMode === "jwt"
+            && apiToken
+            && (launchResponse.status === 401 || launchResponse.status === 403)
+        ) {
+            authMode = await applyLaunchAuth("token");
+            launchResponse = await sendLaunch();
         }
 
-        const launchResponse = await fetch(url, {
-            method: "POST",
-            headers,
-            body: JSON.stringify({ config }),
-            cache: "no-store",
-        });
         const launchText = await launchResponse.text();
         try {
             launchPayload = launchText ? JSON.parse(launchText) : {};
         } catch {
             launchPayload = { detail: launchText };
+        }
+
+        if ((launchResponse.status === 401 || launchResponse.status === 403) && authMode === "none") {
+            return NextResponse.json(
+                {
+                    error: "ClawWork auth misconfigured",
+                    detail:
+                        "No CLAWWORK_JWT_SECRET or CLAWWORK_API_TOKEN configured in OpenOS service for task runs.",
+                },
+                { status: 500 },
+            );
         }
 
         if (!launchResponse.ok) {

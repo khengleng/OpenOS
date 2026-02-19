@@ -23,6 +23,8 @@ const CLAWWORK_JWT_ALGORITHMS = (process.env.CLAWWORK_JWT_ALGORITHMS || "HS256")
     .filter(Boolean);
 const CLAWWORK_JWT_SIGNING_ALG = CLAWWORK_JWT_ALGORITHMS[0] || "HS256";
 
+type AuthMode = "jwt" | "token" | "none";
+
 async function generateClawworkJwt(tenantId: string): Promise<string> {
     if (!CLAWWORK_JWT_SECRET) return "";
 
@@ -63,25 +65,6 @@ export async function proxyClawworkRequest(
             headers.set("content-type", contentType);
         }
 
-        // Tenant-scoped auth requires JWT in production-secure ClawWork deployments.
-        if (tenantId && !CLAWWORK_JWT_SECRET) {
-            return NextResponse.json(
-                {
-                    error: "ClawWork auth misconfigured",
-                    detail:
-                        "Missing CLAWWORK_JWT_SECRET in OpenOS service. Set the same JWT secret in OpenOS and ClawWork.",
-                },
-                { status: 500 },
-            );
-        }
-
-        if (tenantId && CLAWWORK_JWT_SECRET) {
-            const jwt = await generateClawworkJwt(tenantId);
-            headers.set("authorization", `Bearer ${jwt}`);
-        } else if (CLAWWORK_API_TOKEN) {
-            headers.set("authorization", `Bearer ${CLAWWORK_API_TOKEN}`);
-        }
-
         if (tenantId) {
             headers.set("x-tenant-id", tenantId);
         }
@@ -89,12 +72,44 @@ export async function proxyClawworkRequest(
         const method = request.method.toUpperCase();
         const body = method === "GET" || method === "HEAD" ? undefined : await request.text();
 
-        const upstreamResponse = await fetch(upstreamUrl, {
-            method,
-            headers,
-            body,
-            cache: "no-store",
-        });
+        const applyAuthHeaders = async (
+            targetHeaders: Headers,
+            preferredMode: AuthMode,
+        ): Promise<AuthMode> => {
+            targetHeaders.delete("authorization");
+            if (preferredMode === "jwt" && tenantId && CLAWWORK_JWT_SECRET) {
+                const jwt = await generateClawworkJwt(tenantId);
+                targetHeaders.set("authorization", `Bearer ${jwt}`);
+                return "jwt";
+            }
+            if (CLAWWORK_API_TOKEN) {
+                targetHeaders.set("authorization", `Bearer ${CLAWWORK_API_TOKEN}`);
+                return "token";
+            }
+            return "none";
+        };
+
+        const send = async (targetHeaders: Headers) =>
+            fetch(upstreamUrl, {
+                method,
+                headers: targetHeaders,
+                body,
+                cache: "no-store",
+            });
+
+        const initialMode: AuthMode = tenantId && CLAWWORK_JWT_SECRET ? "jwt" : "token";
+        let authMode = await applyAuthHeaders(headers, initialMode);
+        let upstreamResponse = await send(headers);
+
+        const canFallbackToToken =
+            authMode === "jwt"
+            && !!CLAWWORK_API_TOKEN
+            && (upstreamResponse.status === 401 || upstreamResponse.status === 403);
+
+        if (canFallbackToToken) {
+            authMode = await applyAuthHeaders(headers, "token");
+            upstreamResponse = await send(headers);
+        }
 
         const responseBody = await upstreamResponse.text();
         const upstreamContentType = upstreamResponse.headers.get("content-type") || "";
@@ -113,6 +128,17 @@ export async function proxyClawworkRequest(
         const responseHeaders = new Headers();
         if (upstreamContentType) {
             responseHeaders.set("content-type", upstreamContentType);
+        }
+
+        if ((upstreamResponse.status === 401 || upstreamResponse.status === 403) && authMode === "none") {
+            return NextResponse.json(
+                {
+                    error: "ClawWork auth misconfigured",
+                    detail:
+                        "No CLAWWORK_JWT_SECRET or CLAWWORK_API_TOKEN configured in OpenOS service for authenticated ClawWork routes.",
+                },
+                { status: 500 },
+            );
         }
 
         return new NextResponse(responseBody, {

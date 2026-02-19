@@ -28,6 +28,7 @@
 /scripts/*
 !/scripts/
 !/scripts/release_preflight.sh
+!/scripts/verify_clawwork_launch.sh
 
 # Vendored ClawWork runtime/generated artifacts (keep source code tracked)
 /external/ClawWork/.git/

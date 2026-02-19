@@ -8,7 +8,8 @@
     "start": "next start",
     "lint": "eslint",
     "smoke:railway": "bash scripts/smoke_test_railway.sh",
-    "release:preflight": "bash scripts/release_preflight.sh"
+    "release:preflight": "bash scripts/release_preflight.sh",
+    "verify:clawwork-launch": "bash scripts/verify_clawwork_launch.sh"
   },
   "dependencies": {
     "@supabase/ssr": "^0.8.0",
