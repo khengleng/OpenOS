@@ -2,6 +2,7 @@ import { createClient } from '@/lib/supabase/server'
 import { HabitCard } from '@/components/habits/habit-card'
 import { AddHabitDialog } from '@/components/habits/add-habit-dialog'
 import { WeatherWidget } from '@/components/planning/weather-widget'
+import { AppleHealthSyncCard } from '@/components/wellness/apple-health-sync-card'
 
 export default async function PlanningPage() {
     const supabase = await createClient()
@@ -34,6 +35,11 @@ export default async function PlanningPage() {
                         </div>
                     )}
                 </div>
+            </div>
+
+            <div className="space-y-2">
+                <h3 className="text-lg font-semibold">Integrations</h3>
+                <AppleHealthSyncCard />
             </div>
         </div>
     );
