@@ -6,6 +6,10 @@ import { CreatePostDialog } from '@/components/community/create-post-dialog'
 export default async function CommunityPage() {
     const supabase = await createClient()
     const { data: posts } = await supabase.from('local_posts').select('*').order('created_at', { ascending: false })
+    const allPosts = posts || []
+    const borrowCount = allPosts.filter((post) => post.post_type === 'borrow').length
+    const lendCount = allPosts.filter((post) => post.post_type === 'lend').length
+    const alertCount = allPosts.filter((post) => post.post_type === 'alert').length
 
     return (
         <div className="space-y-6">
@@ -17,8 +21,29 @@ export default async function CommunityPage() {
                 <CreatePostDialog />
             </div>
 
+            <div className="grid gap-4 sm:grid-cols-3">
+                <Card>
+                    <CardHeader>
+                        <CardTitle className="text-base">Borrow Requests</CardTitle>
+                    </CardHeader>
+                    <CardContent className="text-2xl font-semibold">{borrowCount}</CardContent>
+                </Card>
+                <Card>
+                    <CardHeader>
+                        <CardTitle className="text-base">Lend Offers</CardTitle>
+                    </CardHeader>
+                    <CardContent className="text-2xl font-semibold">{lendCount}</CardContent>
+                </Card>
+                <Card>
+                    <CardHeader>
+                        <CardTitle className="text-base">Local Alerts</CardTitle>
+                    </CardHeader>
+                    <CardContent className="text-2xl font-semibold">{alertCount}</CardContent>
+                </Card>
+            </div>
+
             <div className="grid gap-4 md:grid-cols-2">
-                {posts?.map((post) => (
+                {allPosts.map((post) => (
                     <Card key={post.id} className="flex flex-col">
                         <CardHeader>
                             <div className="flex justify-between items-start">
@@ -36,9 +61,9 @@ export default async function CommunityPage() {
                         </CardFooter>
                     </Card>
                 ))}
-                {posts?.length === 0 && (
+                {allPosts.length === 0 && (
                     <div className="col-span-full text-center p-8 border rounded-lg border-dashed text-muted-foreground">
-                        No activity nearby. Be the first to post!
+                        The Mesh is live, but there is no nearby activity yet. Create the first neighborhood post.
                     </div>
                 )}
             </div>
