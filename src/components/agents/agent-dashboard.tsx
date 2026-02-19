@@ -74,6 +74,23 @@ export function AgentDashboard() {
     const agents = data?.agents || [];
     const simulations = simulationsData?.simulations || [];
     const runningSimulations = simulations.filter((sim) => sim.status === "running");
+    const existingSimulationIds = new Set(
+        agents.map((agent) => agent.simulation_id).filter(Boolean) as string[]
+    );
+    const simulationAgents: Agent[] = runningSimulations
+        .filter((sim) => !existingSimulationIds.has(sim.id))
+        .map((sim, index) => ({
+            signature: `${sim.signature || "agent"}-${sim.id.slice(0, 8)}-${index}`,
+            balance: 0,
+            net_worth: 0,
+            survival_status: "unknown",
+            current_activity: "Starting simulation",
+            current_date: sim.start_time,
+            total_token_cost: 0,
+            is_running: true,
+            simulation_id: sim.id,
+        }));
+    const visibleAgents = [...agents, ...simulationAgents];
 
     return (
         <div className="space-y-4">
@@ -81,7 +98,7 @@ export function AgentDashboard() {
                 <LaunchAgentDialog />
             </div>
 
-            {agents.length === 0 ? (
+            {visibleAgents.length === 0 ? (
                 <div className="flex flex-col items-center justify-center p-12 border border-dashed rounded-lg bg-muted/20">
                     <h3 className="text-lg font-medium mb-2">No active agents</h3>
                     <p className="text-muted-foreground mb-6 text-center max-w-md">
@@ -109,8 +126,8 @@ export function AgentDashboard() {
                 </div>
             ) : (
                 <div className="grid gap-4 sm:grid-cols-2 lg:grid-cols-3 xl:grid-cols-4">
-                    {agents.map((agent) => (
-                        <AgentCard key={agent.signature} agent={agent} />
+                    {visibleAgents.map((agent) => (
+                        <AgentCard key={agent.simulation_id || agent.signature} agent={agent} />
                     ))}
                 </div>
             )}
