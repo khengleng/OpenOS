@@ -89,6 +89,19 @@ TENANT_HEADER = "x-tenant-id"
 TENANT_ID_PATTERN = re.compile(r"^[a-zA-Z0-9_.:@-]{1,128}$")
 
 
+def _read_log_tail(log_path: Path, max_lines: int = 12) -> Optional[str]:
+    if not log_path.exists():
+        return None
+    try:
+        lines = log_path.read_text(errors="replace").splitlines()
+    except Exception:
+        return None
+    if not lines:
+        return None
+    tail = [line for line in lines[-max_lines:] if line.strip()]
+    return "\n".join(tail) if tail else None
+
+
 def _get_client_ip(request: Request) -> str:
     forwarded_for = request.headers.get("x-forwarded-for", "")
     if forwarded_for:
@@ -394,12 +407,17 @@ async def start_simulation(
         tenant_data_path = tenant_paths["data_path"]
         simulations_path = tenant_paths["simulations_path"]
         tenant_key = tenant_paths["tenant_key"]
+        tenant_root = tenant_paths["tenant_root"]
 
         # Generate unique simulation ID
         sim_id = str(uuid.uuid4())
 
         livebench_config = sim_config.config.setdefault("livebench", {})
         livebench_config["data_path"] = str(tenant_data_path)
+        agent_configs = livebench_config.get("agents", [])
+        primary_agent = agent_configs[0] if agent_configs else {}
+        signature = primary_agent.get("signature", "unknown")
+        model_name = str(primary_agent.get("basemodel", "gpt-4o")).strip()
         
         # Create config file
         config_dir = Path(__file__).parent.parent / "configs" / "generated"
@@ -426,6 +444,20 @@ async def start_simulation(
                 )
             filtered_vars = {k: v for k, v in sim_config.env_vars.items() if v and k in ALLOWED_ENV_VAR_KEYS}
             env.update(filtered_vars)
+
+        is_anthropic_model = model_name.startswith("claude-") or model_name.startswith("anthropic/")
+        required_key = "ANTHROPIC_API_KEY" if is_anthropic_model else "OPENAI_API_KEY"
+        if not env.get(required_key):
+            raise HTTPException(
+                status_code=400,
+                detail=f"Missing required credential for model '{model_name}': {required_key}",
+            )
+
+        # Per-simulation runtime log
+        simulation_logs_dir = tenant_root / "simulation_logs"
+        simulation_logs_dir.mkdir(parents=True, exist_ok=True)
+        log_path = simulation_logs_dir / f"{sim_id}.log"
+        log_file = open(log_path, "ab")
         
         # Spawn subprocess
         # We run it detached so it doesn't block the API
@@ -433,14 +465,10 @@ async def start_simulation(
             [python_exec, str(main_script), str(config_path)],
             env=env,
             cwd=str(Path(__file__).parent.parent.parent), # Valid CWD for imports
-            stdout=subprocess.DEVNULL, # Optionally redirect to log file
-            stderr=subprocess.DEVNULL
+            stdout=log_file,
+            stderr=log_file
         )
-
-        # Get agent signature if available
-        signature = "unknown"
-        if "agents" in sim_config.config.get("livebench", {}) and len(sim_config.config["livebench"]["agents"]) > 0:
-            signature = sim_config.config["livebench"]["agents"][0].get("signature", "unknown")
+        log_file.close()
         
         # Save simulation record
         simulations_path.parent.mkdir(parents=True, exist_ok=True)
@@ -457,8 +485,10 @@ async def start_simulation(
             "pid": process.pid,
             "status": "running",
             "signature": signature,
+            "model": model_name,
             "tenant_key": tenant_key,
             "config_path": str(config_path),
+            "log_path": str(log_path),
             "start_time": datetime.now().isoformat(),
         }
         simulations.append(new_sim)
@@ -471,7 +501,8 @@ async def start_simulation(
             "message": "Simulation started",
             "simulation_id": sim_id,
             "pid": process.pid,
-            "config_path": str(config_path)
+            "config_path": str(config_path),
+            "log_path": str(log_path),
         }
         _audit_log(
             request,
@@ -509,6 +540,10 @@ async def get_simulations(request: Request, _: None = Depends(require_read_auth)
                 except OSError:
                     sim["status"] = "terminated"
                     sim["end_time"] = datetime.now().isoformat()
+                    if not sim.get("termination_hint") and sim.get("log_path"):
+                        tail = _read_log_tail(Path(sim["log_path"]))
+                        if tail:
+                            sim["termination_hint"] = tail
                     updated = True
         
         if updated:

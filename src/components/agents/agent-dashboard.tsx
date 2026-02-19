@@ -13,6 +13,8 @@ type Simulation = {
     status: string;
     signature?: string;
     start_time?: string;
+    model?: string;
+    termination_hint?: string;
 };
 
 const statusBadgeClass = (status: string) => {
@@ -175,6 +177,9 @@ export function AgentDashboard() {
                         <div className="space-y-2">
                             {simulations.slice(0, 20).map((sim) => {
                                 const status = normalizeStatus(sim.status);
+                                const shortHint = sim.termination_hint
+                                    ? sim.termination_hint.split("\n").slice(-1)[0]
+                                    : null;
                                 return (
                                     <div
                                         key={sim.id}
@@ -183,6 +188,12 @@ export function AgentDashboard() {
                                         <div className="min-w-0">
                                             <p className="truncate font-medium">{sim.signature || "Unnamed Agent"}</p>
                                             <p className="truncate text-xs text-muted-foreground">{sim.id}</p>
+                                            {sim.model ? <p className="truncate text-xs text-muted-foreground">{sim.model}</p> : null}
+                                            {shortHint ? (
+                                                <p className="truncate text-xs text-red-700">
+                                                    Exit: {shortHint}
+                                                </p>
+                                            ) : null}
                                         </div>
                                         <div className="flex items-center">
                                             <Badge variant="outline" className={statusBadgeClass(status)}>
