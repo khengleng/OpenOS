@@ -1,0 +1,259 @@
+"use client";
+
+import { useMemo, useState } from "react";
+import useSWR from "swr";
+import { Card, CardContent, CardHeader, CardTitle } from "@/components/ui/card";
+import { Input } from "@/components/ui/input";
+import { Textarea } from "@/components/ui/textarea";
+import { Label } from "@/components/ui/label";
+import { Button } from "@/components/ui/button";
+import { Badge } from "@/components/ui/badge";
+import { Select, SelectContent, SelectItem, SelectTrigger, SelectValue } from "@/components/ui/select";
+
+type TaskStatus = "todo" | "in_progress" | "blocked" | "done";
+type TaskPriority = "low" | "medium" | "high";
+
+type CoworkerTask = {
+    id: string;
+    title: string;
+    description?: string | null;
+    status: TaskStatus;
+    priority: TaskPriority;
+    assigned_agent?: string | null;
+    result_summary?: string | null;
+    created_at: string;
+    updated_at: string;
+};
+
+type AgentRecord = { signature: string };
+
+const fetcher = async <T,>(url: string): Promise<T> => {
+    const res = await fetch(url);
+    const txt = await res.text();
+    if (!res.ok) throw new Error(txt || `HTTP ${res.status}`);
+    return JSON.parse(txt) as T;
+};
+
+const statusLabel: Record<TaskStatus, string> = {
+    todo: "To Do",
+    in_progress: "In Progress",
+    blocked: "Blocked",
+    done: "Done",
+};
+
+const priorityClass: Record<TaskPriority, string> = {
+    low: "bg-slate-100 text-slate-700",
+    medium: "bg-blue-100 text-blue-700",
+    high: "bg-red-100 text-red-700",
+};
+
+export function CoworkerTaskBoard() {
+    const { data, mutate, isLoading, error } = useSWR<{ tasks: CoworkerTask[] }>("/api/coworker/tasks", fetcher, {
+        refreshInterval: 8000,
+    });
+    const { data: agentsData } = useSWR<{ agents: AgentRecord[] }>("/api/clawwork/agents", fetcher, {
+        refreshInterval: 15000,
+    });
+
+    const [title, setTitle] = useState("");
+    const [description, setDescription] = useState("");
+    const [priority, setPriority] = useState<TaskPriority>("medium");
+    const [assignedAgent, setAssignedAgent] = useState("__unassigned");
+    const [resultDraft, setResultDraft] = useState<Record<string, string>>({});
+    const [submitting, setSubmitting] = useState(false);
+    const [message, setMessage] = useState<string>("");
+
+    const tasks = data?.tasks || [];
+    const agentOptions = useMemo(
+        () =>
+            Array.from(
+                new Set((agentsData?.agents || []).map((agent) => String(agent.signature || "").trim()).filter(Boolean)),
+            ),
+        [agentsData],
+    );
+
+    const counts = useMemo(() => {
+        const status = { todo: 0, in_progress: 0, blocked: 0, done: 0 } as Record<TaskStatus, number>;
+        for (const task of tasks) status[task.status] += 1;
+        return status;
+    }, [tasks]);
+
+    async function createTask() {
+        setSubmitting(true);
+        setMessage("");
+        try {
+            const res = await fetch("/api/coworker/tasks", {
+                method: "POST",
+                headers: { "content-type": "application/json" },
+                body: JSON.stringify({
+                    title,
+                    description,
+                    priority,
+                    assigned_agent: assignedAgent === "__unassigned" ? null : assignedAgent,
+                }),
+            });
+            const txt = await res.text();
+            if (!res.ok) throw new Error(txt || "Failed to create task");
+            setTitle("");
+            setDescription("");
+            setPriority("medium");
+            setAssignedAgent("__unassigned");
+            setMessage("Task created.");
+            await mutate();
+        } catch (err) {
+            setMessage(err instanceof Error ? err.message : "Failed to create task");
+        } finally {
+            setSubmitting(false);
+        }
+    }
+
+    async function patchTask(id: string, patch: Record<string, unknown>) {
+        const res = await fetch(`/api/coworker/tasks/${encodeURIComponent(id)}`, {
+            method: "PATCH",
+            headers: { "content-type": "application/json" },
+            body: JSON.stringify(patch),
+        });
+        const txt = await res.text();
+        if (!res.ok) throw new Error(txt || "Update failed");
+        await mutate();
+    }
+
+    return (
+        <div className="space-y-4">
+            <Card>
+                <CardHeader>
+                    <CardTitle>The Coworker Layer</CardTitle>
+                </CardHeader>
+                <CardContent className="grid gap-4 md:grid-cols-2">
+                    <div className="space-y-3">
+                        <div className="space-y-2">
+                            <Label htmlFor="task-title">Task Title</Label>
+                            <Input
+                                id="task-title"
+                                value={title}
+                                onChange={(e) => setTitle(e.target.value)}
+                                placeholder="Prepare Q1 budget variance report"
+                            />
+                        </div>
+                        <div className="space-y-2">
+                            <Label htmlFor="task-desc">Task Description</Label>
+                            <Textarea
+                                id="task-desc"
+                                value={description}
+                                onChange={(e) => setDescription(e.target.value)}
+                                placeholder="Include assumptions, top anomalies, and actions."
+                            />
+                        </div>
+                    </div>
+                    <div className="space-y-3">
+                        <div className="space-y-2">
+                            <Label>Priority</Label>
+                            <Select value={priority} onValueChange={(value) => setPriority(value as TaskPriority)}>
+                                <SelectTrigger>
+                                    <SelectValue />
+                                </SelectTrigger>
+                                <SelectContent>
+                                    <SelectItem value="low">Low</SelectItem>
+                                    <SelectItem value="medium">Medium</SelectItem>
+                                    <SelectItem value="high">High</SelectItem>
+                                </SelectContent>
+                            </Select>
+                        </div>
+                        <div className="space-y-2">
+                            <Label>Assign Agent (optional)</Label>
+                            <Select value={assignedAgent} onValueChange={setAssignedAgent}>
+                                <SelectTrigger>
+                                    <SelectValue placeholder="Unassigned" />
+                                </SelectTrigger>
+                                <SelectContent>
+                                    <SelectItem value="__unassigned">Unassigned</SelectItem>
+                                    {agentOptions.map((signature) => (
+                                        <SelectItem key={signature} value={signature}>
+                                            {signature}
+                                        </SelectItem>
+                                    ))}
+                                </SelectContent>
+                            </Select>
+                        </div>
+                        <Button
+                            onClick={createTask}
+                            disabled={submitting || !title.trim()}
+                            className="w-full"
+                        >
+                            {submitting ? "Creating..." : "Create Coworker Task"}
+                        </Button>
+                        {message ? <p className="text-xs text-muted-foreground">{message}</p> : null}
+                    </div>
+                </CardContent>
+            </Card>
+
+            <div className="grid gap-4 sm:grid-cols-4">
+                <Card><CardHeader className="pb-2"><CardTitle className="text-sm">To Do</CardTitle></CardHeader><CardContent className="text-2xl font-semibold">{counts.todo}</CardContent></Card>
+                <Card><CardHeader className="pb-2"><CardTitle className="text-sm">In Progress</CardTitle></CardHeader><CardContent className="text-2xl font-semibold">{counts.in_progress}</CardContent></Card>
+                <Card><CardHeader className="pb-2"><CardTitle className="text-sm">Blocked</CardTitle></CardHeader><CardContent className="text-2xl font-semibold">{counts.blocked}</CardContent></Card>
+                <Card><CardHeader className="pb-2"><CardTitle className="text-sm">Done</CardTitle></CardHeader><CardContent className="text-2xl font-semibold">{counts.done}</CardContent></Card>
+            </div>
+
+            <Card>
+                <CardHeader>
+                    <CardTitle>Task Lifecycle</CardTitle>
+                </CardHeader>
+                <CardContent className="space-y-3">
+                    {error ? <p className="text-sm text-red-700">Failed to load tasks.</p> : null}
+                    {isLoading ? <p className="text-sm text-muted-foreground">Loading tasks...</p> : null}
+                    {!isLoading && tasks.length === 0 ? (
+                        <p className="text-sm text-muted-foreground">No coworker tasks yet. Create the first task above.</p>
+                    ) : null}
+                    {tasks.map((task) => (
+                        <div key={task.id} className="rounded-md border p-3 space-y-2">
+                            <div className="flex items-center justify-between gap-2">
+                                <p className="font-medium truncate">{task.title}</p>
+                                <div className="flex gap-2">
+                                    <Badge variant="outline">{statusLabel[task.status]}</Badge>
+                                    <Badge className={priorityClass[task.priority]}>{task.priority}</Badge>
+                                </div>
+                            </div>
+                            {task.description ? <p className="text-sm text-muted-foreground">{task.description}</p> : null}
+                            <p className="text-xs text-muted-foreground">
+                                Agent: {task.assigned_agent || "Unassigned"} | Updated {new Date(task.updated_at).toLocaleString()}
+                            </p>
+                            {task.result_summary ? (
+                                <p className="text-sm rounded bg-muted p-2">
+                                    <span className="font-medium">Result:</span> {task.result_summary}
+                                </p>
+                            ) : null}
+                            <div className="flex flex-wrap gap-2">
+                                <Button size="sm" variant="outline" onClick={() => patchTask(task.id, { status: "in_progress" })}>
+                                    Start
+                                </Button>
+                                <Button size="sm" variant="outline" onClick={() => patchTask(task.id, { status: "blocked" })}>
+                                    Block
+                                </Button>
+                                <Button size="sm" variant="outline" onClick={() => patchTask(task.id, { status: "todo" })}>
+                                    Reopen
+                                </Button>
+                                <Button size="sm" onClick={() => patchTask(task.id, { status: "done" })}>
+                                    Complete
+                                </Button>
+                            </div>
+                            <div className="flex gap-2">
+                                <Input
+                                    value={resultDraft[task.id] || ""}
+                                    onChange={(e) => setResultDraft((prev) => ({ ...prev, [task.id]: e.target.value }))}
+                                    placeholder="Add result/summary..."
+                                />
+                                <Button
+                                    size="sm"
+                                    variant="secondary"
+                                    onClick={() => patchTask(task.id, { result_summary: resultDraft[task.id] || "" })}
+                                >
+                                    Save Result
+                                </Button>
+                            </div>
+                        </div>
+                    ))}
+                </CardContent>
+            </Card>
+        </div>
+    );
+}

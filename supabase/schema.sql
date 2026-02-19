@@ -80,3 +80,30 @@ create table local_posts (
 alter table local_posts enable row level security;
 create policy "Authenticated users can view local posts." on local_posts for select using (auth.uid() is not null);
 create policy "Users can insert their own posts." on local_posts for insert with check (auth.uid() = user_id);
+
+-- COWORKER TASKS (Agentic task lifecycle)
+create table coworker_tasks (
+  id uuid default uuid_generate_v4() primary key,
+  user_id uuid references auth.users not null,
+  title text not null,
+  description text,
+  status text not null default 'todo' check (status in ('todo', 'in_progress', 'blocked', 'done')),
+  priority text not null default 'medium' check (priority in ('low', 'medium', 'high')),
+  assigned_agent text,
+  result_summary text,
+  history jsonb not null default '[]'::jsonb,
+  created_at timestamp with time zone default now(),
+  updated_at timestamp with time zone default now(),
+  started_at timestamp with time zone,
+  completed_at timestamp with time zone
+);
+
+create index coworker_tasks_user_created_idx on coworker_tasks(user_id, created_at desc);
+create index coworker_tasks_user_status_idx on coworker_tasks(user_id, status);
+
+-- RLS for Coworker Tasks
+alter table coworker_tasks enable row level security;
+create policy "Users can view their own coworker tasks." on coworker_tasks for select using (auth.uid() = user_id);
+create policy "Users can insert their own coworker tasks." on coworker_tasks for insert with check (auth.uid() = user_id);
+create policy "Users can update their own coworker tasks." on coworker_tasks for update using (auth.uid() = user_id);
+create policy "Users can delete their own coworker tasks." on coworker_tasks for delete using (auth.uid() = user_id);

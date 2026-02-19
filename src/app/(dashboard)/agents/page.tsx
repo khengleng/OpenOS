@@ -1,6 +1,7 @@
 "use client";
 
 import { AgentDashboard } from "@/components/agents/agent-dashboard";
+import { CoworkerTaskBoard } from "@/components/agents/coworker-task-board";
 
 export default function AgentsPage() {
     return (
@@ -12,6 +13,7 @@ export default function AgentsPage() {
                 </div>
             </div>
             <AgentDashboard />
+            <CoworkerTaskBoard />
         </div>
     );
 }
