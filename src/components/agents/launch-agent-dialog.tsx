@@ -1,7 +1,7 @@
 "use client";
 
 import { useState } from "react";
-import { Dialog, DialogContent, DialogDescription, DialogFooter, DialogHeader, DialogTitle, DialogTrigger } from "@/components/ui/dialog";
+import { Dialog, DialogContent, DialogDescription, DialogFooter, DialogHeader, DialogTitle } from "@/components/ui/dialog";
 import { Button } from "@/components/ui/button";
 import { Input } from "@/components/ui/input";
 import { Label } from "@/components/ui/label";
@@ -14,6 +14,7 @@ const API_BASE = "/api/clawwork";
 export function LaunchAgentDialog() {
     const [open, setOpen] = useState(false);
     const [loading, setLoading] = useState(false);
+    const [errorMessage, setErrorMessage] = useState("");
     const { mutate } = useSWRConfig();
 
     // Form state
@@ -23,6 +24,7 @@ export function LaunchAgentDialog() {
 
 
     const handleLaunch = async () => {
+        setErrorMessage("");
         setLoading(true);
         try {
             const config = {
@@ -87,7 +89,7 @@ export function LaunchAgentDialog() {
             setOpen(false);
         } catch (error) {
             console.error("Error launching agent:", error);
-            alert("Failed to launch agent. Check console for details.");
+            setErrorMessage(error instanceof Error ? error.message : "Failed to launch agent.");
         } finally {
             setLoading(false);
         }
@@ -95,12 +97,10 @@ export function LaunchAgentDialog() {
 
     return (
         <Dialog open={open} onOpenChange={setOpen}>
-            <DialogTrigger asChild>
-                <Button>
-                    <Plus className="mr-2 h-4 w-4" />
-                    Hire New Agent
-                </Button>
-            </DialogTrigger>
+            <Button onClick={() => setOpen(true)}>
+                <Plus className="mr-2 h-4 w-4" />
+                Hire New Agent
+            </Button>
             <DialogContent className="sm:max-w-[425px]">
                 <DialogHeader>
                     <DialogTitle>Hire New AI Coworker</DialogTitle>
@@ -148,6 +148,9 @@ export function LaunchAgentDialog() {
                             className="col-span-3"
                         />
                     </div>
+                    {errorMessage && (
+                        <p className="text-sm text-red-600">{errorMessage}</p>
+                    )}
                 </div>
                 <DialogFooter>
                     <Button onClick={handleLaunch} disabled={loading}>
