@@ -32,7 +32,7 @@ export function LaunchAgentDialog() {
     // Form state
     const [agentName, setAgentName] = useState(suggestAgentName());
     const [provider, setProvider] = useState<Provider>("openai");
-    const [model, setModel] = useState(PROVIDER_MODELS.openai[0].value);
+    const [model, setModel] = useState<string>(PROVIDER_MODELS.openai[0].value);
     const [initialBalance, setInitialBalance] = useState("10");
 
 
