@@ -15,6 +15,8 @@ type Simulation = {
     start_time?: string;
     model?: string;
     termination_hint?: string;
+    stop_reason?: string;
+    retry_count?: number;
 };
 
 const statusBadgeClass = (status: string) => {
@@ -183,6 +185,9 @@ export function AgentDashboard() {
                                 const shortHint = sim.termination_hint
                                     ? sim.termination_hint.split("\n").slice(-1)[0]
                                     : null;
+                                const shortStopReason = sim.stop_reason
+                                    ? sim.stop_reason.split("\n").slice(-1)[0]
+                                    : null;
                                 return (
                                     <div
                                         key={sim.id}
@@ -195,6 +200,16 @@ export function AgentDashboard() {
                                             {shortHint ? (
                                                 <p className="truncate text-xs text-red-700">
                                                     Exit: {shortHint}
+                                                </p>
+                                            ) : null}
+                                            {shortStopReason ? (
+                                                <p className="truncate text-xs text-amber-700">
+                                                    Stop: {shortStopReason}
+                                                </p>
+                                            ) : null}
+                                            {typeof sim.retry_count === "number" && sim.retry_count > 0 ? (
+                                                <p className="truncate text-xs text-muted-foreground">
+                                                    Retries: {sim.retry_count}
                                                 </p>
                                             ) : null}
                                         </div>

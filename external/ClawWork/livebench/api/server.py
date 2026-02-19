@@ -18,7 +18,7 @@ import re
 from datetime import datetime
 from pathlib import Path
 from collections import deque
-from typing import Deque, Dict, List, Optional
+from typing import Deque, Dict, List, Optional, Tuple
 from fastapi import FastAPI, WebSocket, WebSocketDisconnect, HTTPException, Query, Depends, Header, Request
 from fastapi.responses import FileResponse
 from fastapi.middleware.cors import CORSMiddleware
@@ -28,6 +28,7 @@ import subprocess
 import tempfile
 import uuid
 import sys
+import signal
 
 from contextlib import asynccontextmanager
 
@@ -137,6 +138,51 @@ def _is_simulation_completed(log_path: Path) -> bool:
         return False
     # main.py prints this on successful completion.
     return any("LIVEBENCH SIMULATION COMPLETE" in line for line in lines[-200:])
+
+
+def _calculate_spend_usage(agent_dir: Path) -> Tuple[float, float]:
+    token_costs_path = agent_dir / "economic" / "token_costs.jsonl"
+    if not token_costs_path.exists():
+        return 0.0, 0.0
+    today = datetime.utcnow().strftime("%Y-%m-%d")
+    month_prefix = today[:7]
+    daily = 0.0
+    monthly = 0.0
+    try:
+        with open(token_costs_path, "r", encoding="utf-8") as f:
+            for line in f:
+                line = line.strip()
+                if not line:
+                    continue
+                try:
+                    record = json.loads(line)
+                except json.JSONDecodeError:
+                    continue
+                record_date = str(record.get("date") or "")
+                cost = float((record.get("cost_summary") or {}).get("total_cost") or 0.0)
+                if record_date.startswith(month_prefix):
+                    monthly += cost
+                if record_date == today:
+                    daily += cost
+    except Exception:
+        return 0.0, 0.0
+    return daily, monthly
+
+
+def _spawn_simulation_process(config_path: str, log_path: str, env: Optional[dict] = None) -> subprocess.Popen:
+    python_exec = sys.executable
+    main_script = Path(__file__).parent.parent / "main.py"
+    runtime_env = env or os.environ.copy()
+    with open(log_path, "ab") as log_file:
+        log_file.write(f"\n--- simulation start {datetime.utcnow().isoformat()}Z ---\n".encode("utf-8"))
+        process = subprocess.Popen(
+            [python_exec, str(main_script), str(config_path)],
+            env=runtime_env,
+            cwd=str(Path(__file__).parent.parent.parent),
+            stdout=log_file,
+            stderr=log_file,
+        )
+    return process
 
 
 def _get_client_ip(request: Request) -> str:
@@ -464,12 +510,6 @@ async def start_simulation(
         with open(config_path, "w") as f:
             json.dump(sim_config.config, f, indent=2)
             
-        # Determine python executable
-        python_exec = sys.executable
-        
-        # Path to main.py
-        main_script = Path(__file__).parent.parent / "main.py"
-        
         # Environment variables
         env = os.environ.copy()
         if sim_config.env_vars:
@@ -490,22 +530,20 @@ async def start_simulation(
                 detail=f"Missing required credential for model '{model_name}': {required_key}",
             )
 
+        restart_policy = (livebench_config.get("restart_policy") or {})
+        restart_enabled = bool(restart_policy.get("enabled", True))
+        max_retries = int(restart_policy.get("max_retries", 2))
+        backoff_sec = int(restart_policy.get("backoff_sec", 10))
+
+        economic_config = livebench_config.get("economic", {})
+        spend_cap_daily = float(economic_config.get("spend_cap_daily_usd", 0.0) or 0.0)
+        spend_cap_monthly = float(economic_config.get("spend_cap_monthly_usd", 0.0) or 0.0)
+
         # Per-simulation runtime log
         simulation_logs_dir = tenant_root / "simulation_logs"
         simulation_logs_dir.mkdir(parents=True, exist_ok=True)
         log_path = simulation_logs_dir / f"{sim_id}.log"
-        log_file = open(log_path, "ab")
-        
-        # Spawn subprocess
-        # We run it detached so it doesn't block the API
-        process = subprocess.Popen(
-            [python_exec, str(main_script), str(config_path)],
-            env=env,
-            cwd=str(Path(__file__).parent.parent.parent), # Valid CWD for imports
-            stdout=log_file,
-            stderr=log_file
-        )
-        log_file.close()
+        process = _spawn_simulation_process(str(config_path), str(log_path), env=env)
         
         # Save simulation record
         simulations_path.parent.mkdir(parents=True, exist_ok=True)
@@ -526,6 +564,14 @@ async def start_simulation(
             "tenant_key": tenant_key,
             "config_path": str(config_path),
             "log_path": str(log_path),
+            "restart_policy": {
+                "enabled": restart_enabled,
+                "max_retries": max(0, max_retries),
+                "backoff_sec": max(0, backoff_sec),
+            },
+            "retry_count": 0,
+            "spend_cap_daily_usd": max(0.0, spend_cap_daily),
+            "spend_cap_monthly_usd": max(0.0, spend_cap_monthly),
             "start_time": datetime.now().isoformat(),
         }
         simulations.append(new_sim)
@@ -559,7 +605,9 @@ async def start_simulation(
 @app.get("/api/simulations")
 async def get_simulations(request: Request, _: None = Depends(require_read_auth)):
     """List all simulations"""
-    simulations_path = _get_tenant_paths(request)["simulations_path"]
+    tenant_paths = _get_tenant_paths(request)
+    simulations_path = tenant_paths["simulations_path"]
+    tenant_data_path = tenant_paths["data_path"]
     if not simulations_path.exists():
         return {"simulations": []}
     
@@ -571,6 +619,28 @@ async def get_simulations(request: Request, _: None = Depends(require_read_auth)
         updated = False
         for sim in simulations:
             if sim["status"] == "running":
+                signature = str(sim.get("signature") or "").strip()
+                if signature:
+                    daily_spend, monthly_spend = _calculate_spend_usage(tenant_data_path / signature)
+                    sim["daily_spend_usd"] = round(daily_spend, 4)
+                    sim["monthly_spend_usd"] = round(monthly_spend, 4)
+                    daily_cap = float(sim.get("spend_cap_daily_usd") or 0.0)
+                    monthly_cap = float(sim.get("spend_cap_monthly_usd") or 0.0)
+                    over_daily = daily_cap > 0 and daily_spend > daily_cap
+                    over_monthly = monthly_cap > 0 and monthly_spend > monthly_cap
+                    if over_daily or over_monthly:
+                        try:
+                            os.kill(sim["pid"], signal.SIGTERM)
+                        except OSError:
+                            pass
+                        sim["status"] = "stopped"
+                        sim["end_time"] = datetime.now().isoformat()
+                        sim["stop_reason"] = (
+                            f"Spend cap exceeded (daily={daily_spend:.2f}/{daily_cap:.2f}, "
+                            f"monthly={monthly_spend:.2f}/{monthly_cap:.2f})"
+                        )
+                        updated = True
+                        continue
                 try:
                     # Check if process exists (sent signal 0 does no harm)
                     os.kill(sim["pid"], 0)
@@ -583,6 +653,36 @@ async def get_simulations(request: Request, _: None = Depends(require_read_auth)
                         tail = _read_log_tail(Path(sim["log_path"]))
                         if tail:
                             sim["termination_hint"] = tail
+                    if sim["status"] == "terminated":
+                        restart_policy = sim.get("restart_policy") or {}
+                        retry_count = int(sim.get("retry_count") or 0)
+                        max_retries = int(restart_policy.get("max_retries") or 0)
+                        enabled = bool(restart_policy.get("enabled", False))
+                        if enabled and retry_count < max_retries:
+                            backoff_sec = int(restart_policy.get("backoff_sec") or 0)
+                            ended_at = datetime.now()
+                            last_restart_raw = sim.get("last_restart_at")
+                            if last_restart_raw:
+                                try:
+                                    elapsed = (ended_at - datetime.fromisoformat(last_restart_raw)).total_seconds()
+                                except ValueError:
+                                    elapsed = backoff_sec
+                            else:
+                                elapsed = backoff_sec
+                            if elapsed >= backoff_sec:
+                                try:
+                                    process = _spawn_simulation_process(
+                                        str(sim.get("config_path")),
+                                        str(sim.get("log_path")),
+                                    )
+                                    sim["pid"] = process.pid
+                                    sim["status"] = "running"
+                                    sim["retry_count"] = retry_count + 1
+                                    sim["last_restart_at"] = datetime.now().isoformat()
+                                    sim.pop("termination_hint", None)
+                                    sim.pop("end_time", None)
+                                except Exception as restart_error:
+                                    sim["termination_hint"] = f"Auto-restart failed: {restart_error}"
                     updated = True
         
         if updated:

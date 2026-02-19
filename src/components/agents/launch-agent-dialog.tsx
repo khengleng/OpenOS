@@ -34,6 +34,10 @@ export function LaunchAgentDialog() {
     const [provider, setProvider] = useState<Provider>("openai");
     const [model, setModel] = useState<string>(PROVIDER_MODELS.openai[0].value);
     const [initialBalance, setInitialBalance] = useState("10");
+    const [dailySpendCap, setDailySpendCap] = useState("25");
+    const [monthlySpendCap, setMonthlySpendCap] = useState("200");
+    const [maxRetries, setMaxRetries] = useState("2");
+    const [restartBackoffSec, setRestartBackoffSec] = useState("10");
 
 
     const handleLaunch = async () => {
@@ -64,10 +68,17 @@ export function LaunchAgentDialog() {
                     },
                     economic: {
                         initial_balance: parseFloat(initialBalance),
+                        spend_cap_daily_usd: Math.max(0, parseFloat(dailySpendCap || "0")),
+                        spend_cap_monthly_usd: Math.max(0, parseFloat(monthlySpendCap || "0")),
                         token_pricing: {
                             input_per_1m: 2.5,
                             output_per_1m: 10.0
                         }
+                    },
+                    restart_policy: {
+                        enabled: true,
+                        max_retries: Math.max(0, parseInt(maxRetries || "0", 10)),
+                        backoff_sec: Math.max(0, parseInt(restartBackoffSec || "0", 10))
                     },
                     agents: [
                         {
@@ -136,6 +147,10 @@ export function LaunchAgentDialog() {
                         setAgentName(suggestAgentName());
                         setProvider("openai");
                         setModel(PROVIDER_MODELS.openai[0].value);
+                        setDailySpendCap("25");
+                        setMonthlySpendCap("200");
+                        setMaxRetries("2");
+                        setRestartBackoffSec("10");
                         setOpen(true);
                     }}
                 >
@@ -201,7 +216,7 @@ export function LaunchAgentDialog() {
                         </Select>
                     </div>
                     <p className="text-xs text-muted-foreground">
-                        Select the AI provider/model for this agent. Ensure the matching API credentials are configured in ClawWork.
+                        Select provider/model and runtime guardrails. Spend caps auto-stop runs, and retries auto-restart failed runs.
                     </p>
                     <div className="grid grid-cols-4 items-center gap-4">
                         <Label htmlFor="balance" className="text-right">
@@ -212,6 +227,62 @@ export function LaunchAgentDialog() {
                             type="number"
                             value={initialBalance}
                             onChange={(e) => setInitialBalance(e.target.value)}
+                            className="col-span-3"
+                        />
+                    </div>
+                    <div className="grid grid-cols-4 items-center gap-4">
+                        <Label htmlFor="daily_cap" className="text-right">
+                            Daily Cap ($)
+                        </Label>
+                        <Input
+                            id="daily_cap"
+                            type="number"
+                            min="0"
+                            step="0.01"
+                            value={dailySpendCap}
+                            onChange={(e) => setDailySpendCap(e.target.value)}
+                            className="col-span-3"
+                        />
+                    </div>
+                    <div className="grid grid-cols-4 items-center gap-4">
+                        <Label htmlFor="monthly_cap" className="text-right">
+                            Monthly Cap ($)
+                        </Label>
+                        <Input
+                            id="monthly_cap"
+                            type="number"
+                            min="0"
+                            step="0.01"
+                            value={monthlySpendCap}
+                            onChange={(e) => setMonthlySpendCap(e.target.value)}
+                            className="col-span-3"
+                        />
+                    </div>
+                    <div className="grid grid-cols-4 items-center gap-4">
+                        <Label htmlFor="max_retries" className="text-right">
+                            Auto-Retries
+                        </Label>
+                        <Input
+                            id="max_retries"
+                            type="number"
+                            min="0"
+                            max="10"
+                            value={maxRetries}
+                            onChange={(e) => setMaxRetries(e.target.value)}
+                            className="col-span-3"
+                        />
+                    </div>
+                    <div className="grid grid-cols-4 items-center gap-4">
+                        <Label htmlFor="backoff_sec" className="text-right">
+                            Retry Delay (s)
+                        </Label>
+                        <Input
+                            id="backoff_sec"
+                            type="number"
+                            min="0"
+                            max="300"
+                            value={restartBackoffSec}
+                            onChange={(e) => setRestartBackoffSec(e.target.value)}
                             className="col-span-3"
                         />
                     </div>
