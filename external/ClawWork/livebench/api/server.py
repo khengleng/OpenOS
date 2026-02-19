@@ -15,6 +15,7 @@ import secrets
 import time
 import hashlib
 import re
+import jwt
 from datetime import datetime
 from pathlib import Path
 from collections import deque
@@ -65,6 +66,19 @@ REQUIRE_READ_AUTH = os.getenv("CLAWWORK_REQUIRE_READ_AUTH", _default_require_aut
 _default_require_tenant = "true" if CLAWWORK_ENV == "production" else "false"
 REQUIRE_TENANT_CONTEXT = os.getenv("CLAWWORK_REQUIRE_TENANT_CONTEXT", _default_require_tenant).strip().lower() == "true"
 CLAWWORK_API_TOKEN = os.getenv("CLAWWORK_API_TOKEN", "").strip()
+CLAWWORK_JWT_SECRET = os.getenv("CLAWWORK_JWT_SECRET", "").strip()
+CLAWWORK_JWT_ISSUER = os.getenv("CLAWWORK_JWT_ISSUER", "").strip()
+CLAWWORK_JWT_AUDIENCE = os.getenv("CLAWWORK_JWT_AUDIENCE", "").strip()
+CLAWWORK_JWT_ALGORITHMS = [
+    alg.strip()
+    for alg in os.getenv("CLAWWORK_JWT_ALGORITHMS", "HS256").split(",")
+    if alg.strip()
+]
+_default_legacy_fallback = "false" if CLAWWORK_ENV == "production" else "true"
+LEGACY_TOKEN_FALLBACK = os.getenv(
+    "CLAWWORK_LEGACY_TOKEN_FALLBACK",
+    _default_legacy_fallback,
+).strip().lower() == "true"
 _default_rate_limit_enabled = "true" if CLAWWORK_ENV == "production" else "false"
 RATE_LIMIT_ENABLED = os.getenv("CLAWWORK_RATE_LIMIT_ENABLED", _default_rate_limit_enabled).strip().lower() == "true"
 RATE_LIMIT_WINDOW_SEC = int(os.getenv("CLAWWORK_RATE_LIMIT_WINDOW_SEC", "60"))
@@ -78,16 +92,24 @@ ALLOWED_ENV_VAR_KEYS = set(
     )
 )
 
-if (REQUIRE_MUTATION_AUTH or REQUIRE_READ_AUTH) and not CLAWWORK_API_TOKEN:
+if (REQUIRE_MUTATION_AUTH or REQUIRE_READ_AUTH) and not CLAWWORK_JWT_SECRET and not CLAWWORK_API_TOKEN:
     print(
-        "WARNING: API auth is enabled but CLAWWORK_API_TOKEN is not configured; "
-        "read/write endpoints will deny requests until token is set.",
+        "WARNING: API auth is enabled but no JWT secret/token auth is configured; "
+        "read/write endpoints will deny requests until auth is configured.",
         file=sys.stderr,
     )
 
 _rate_limit_buckets: Dict[str, Deque[float]] = {}
 TENANT_HEADER = "x-tenant-id"
 TENANT_ID_PATTERN = re.compile(r"^[a-zA-Z0-9_.:@-]{1,128}$")
+AGENT_SIGNATURE_PATTERN = re.compile(r"^[A-Za-z0-9][A-Za-z0-9 _.-]{0,127}$")
+_default_max_active = "5" if CLAWWORK_ENV == "production" else "20"
+MAX_ACTIVE_SIMULATIONS_PER_TENANT = int(
+    os.getenv("CLAWWORK_MAX_ACTIVE_SIMULATIONS_PER_TENANT", _default_max_active)
+)
+MAX_SIMULATION_HISTORY_PER_TENANT = int(
+    os.getenv("CLAWWORK_MAX_SIMULATION_HISTORY_PER_TENANT", "500")
+)
 
 
 def _read_log_tail(log_path: Path, max_lines: int = 12) -> Optional[str]:
@@ -237,6 +259,25 @@ def _enforce_rate_limit(request: Request, action: str, is_write: bool) -> None:
 
     bucket.append(now)
 
+
+def _validate_agent_signature(signature: str) -> str:
+    normalized = str(signature or "").strip()
+    if not normalized:
+        raise HTTPException(status_code=400, detail="Missing agent signature")
+    if normalized in {".", ".."}:
+        raise HTTPException(status_code=400, detail="Invalid agent signature")
+    if not AGENT_SIGNATURE_PATTERN.fullmatch(normalized):
+        raise HTTPException(status_code=400, detail="Invalid agent signature")
+    return normalized
+
+
+def _is_process_alive(pid: int) -> bool:
+    try:
+        os.kill(int(pid), 0)
+        return True
+    except Exception:
+        return False
+
 BASE_DATA_ROOT = (Path(__file__).parent.parent / "data").resolve()
 TENANTS_ROOT = BASE_DATA_ROOT / "tenants"
 
@@ -254,6 +295,55 @@ def _extract_auth_token(
 
 def _validate_api_token(token: str) -> bool:
     return bool(token) and secrets.compare_digest(token, CLAWWORK_API_TOKEN)
+
+
+def _legacy_token_fallback_active() -> bool:
+    # Never allow legacy shared-token fallback in production.
+    return CLAWWORK_ENV != "production" and LEGACY_TOKEN_FALLBACK and bool(CLAWWORK_API_TOKEN)
+
+
+def _extract_tenant_claim(payload: dict) -> str:
+    raw_tenant = payload.get("tenant_id") or payload.get("tenant") or payload.get("tid") or ""
+    tenant_id = str(raw_tenant).strip()
+    if not tenant_id:
+        return ""
+    if not TENANT_ID_PATTERN.fullmatch(tenant_id):
+        return ""
+    return tenant_id
+
+
+def _validate_jwt_token(token: str, tenant_id: str) -> bool:
+    if not token or not CLAWWORK_JWT_SECRET:
+        return False
+    if not CLAWWORK_JWT_ALGORITHMS:
+        return False
+
+    decode_kwargs: Dict[str, object] = {
+        "key": CLAWWORK_JWT_SECRET,
+        "algorithms": CLAWWORK_JWT_ALGORITHMS,
+    }
+    if CLAWWORK_JWT_ISSUER:
+        decode_kwargs["issuer"] = CLAWWORK_JWT_ISSUER
+    if CLAWWORK_JWT_AUDIENCE:
+        decode_kwargs["audience"] = CLAWWORK_JWT_AUDIENCE
+
+    try:
+        payload = jwt.decode(token, **decode_kwargs)
+    except jwt.PyJWTError:
+        return False
+
+    if not isinstance(payload, dict):
+        return False
+    claimed_tenant = _extract_tenant_claim(payload)
+    return bool(claimed_tenant) and secrets.compare_digest(claimed_tenant, tenant_id)
+
+
+def _validate_auth_token_for_tenant(token: str, tenant_id: str) -> bool:
+    if _validate_jwt_token(token, tenant_id):
+        return True
+    if _legacy_token_fallback_active() and _validate_api_token(token):
+        return True
+    return False
 
 
 def _resolve_tenant_id(request: Request) -> str:
@@ -412,8 +502,9 @@ async def healthz():
 async def readyz():
     """Readiness probe endpoint"""
     missing_env = []
-    if (REQUIRE_MUTATION_AUTH or REQUIRE_READ_AUTH) and not CLAWWORK_API_TOKEN:
-        missing_env.append("CLAWWORK_API_TOKEN")
+    if REQUIRE_MUTATION_AUTH or REQUIRE_READ_AUTH:
+        if not CLAWWORK_JWT_SECRET and not _legacy_token_fallback_active():
+            missing_env.append("CLAWWORK_JWT_SECRET")
 
     tenants_writable = True
     tenants_error = None
@@ -435,6 +526,7 @@ async def readyz():
         "tenants_writable": tenants_writable,
         "tenants_error": tenants_error,
         "require_tenant_context": REQUIRE_TENANT_CONTEXT,
+        "legacy_token_fallback": _legacy_token_fallback_active(),
         "ts": datetime.utcnow().isoformat() + "Z",
     }
 
@@ -450,13 +542,14 @@ def require_write_auth(
     x_clawwork_token: Optional[str] = Header(default=None),
 ):
     _enforce_rate_limit(request, action="api.write", is_write=True)
-    _get_tenant_paths(request)
+    tenant_paths = _get_tenant_paths(request)
 
     if not REQUIRE_MUTATION_AUTH:
         return
 
     token = _extract_auth_token(authorization=authorization, x_clawwork_token=x_clawwork_token)
-    if not _validate_api_token(token):
+    tenant_id = str(tenant_paths["tenant_id"])
+    if not _validate_auth_token_for_tenant(token, tenant_id):
         _audit_log(request, action="api.write.auth", status="denied")
         raise HTTPException(status_code=401, detail="Unauthorized")
 
@@ -467,13 +560,14 @@ def require_read_auth(
     x_clawwork_token: Optional[str] = Header(default=None),
 ):
     _enforce_rate_limit(request, action="api.read", is_write=False)
-    _get_tenant_paths(request)
+    tenant_paths = _get_tenant_paths(request)
 
     if not REQUIRE_READ_AUTH:
         return
 
     token = _extract_auth_token(authorization=authorization, x_clawwork_token=x_clawwork_token)
-    if not _validate_api_token(token):
+    tenant_id = str(tenant_paths["tenant_id"])
+    if not _validate_auth_token_for_tenant(token, tenant_id):
         _audit_log(request, action="api.read.auth", status="denied")
         raise HTTPException(status_code=401, detail="Unauthorized")
 
@@ -499,7 +593,7 @@ async def start_simulation(
         livebench_config["data_path"] = str(tenant_data_path)
         agent_configs = livebench_config.get("agents", [])
         primary_agent = agent_configs[0] if agent_configs else {}
-        signature = primary_agent.get("signature", "unknown")
+        signature = _validate_agent_signature(primary_agent.get("signature", "unknown"))
         model_name = str(primary_agent.get("basemodel", "gpt-4o")).strip()
         
         # Create config file
@@ -539,12 +633,6 @@ async def start_simulation(
         spend_cap_daily = float(economic_config.get("spend_cap_daily_usd", 0.0) or 0.0)
         spend_cap_monthly = float(economic_config.get("spend_cap_monthly_usd", 0.0) or 0.0)
 
-        # Per-simulation runtime log
-        simulation_logs_dir = tenant_root / "simulation_logs"
-        simulation_logs_dir.mkdir(parents=True, exist_ok=True)
-        log_path = simulation_logs_dir / f"{sim_id}.log"
-        process = _spawn_simulation_process(str(config_path), str(log_path), env=env)
-        
         # Save simulation record
         simulations_path.parent.mkdir(parents=True, exist_ok=True)
         simulations = []
@@ -554,6 +642,31 @@ async def start_simulation(
                     simulations = json.load(f)
             except json.JSONDecodeError:
                 pass
+
+        # Enforce per-tenant simulation limits to reduce abuse/DoS blast radius.
+        running_count = 0
+        for sim in simulations:
+            if sim.get("status") == "running" and _is_process_alive(sim.get("pid", -1)):
+                running_count += 1
+        if running_count >= max(1, MAX_ACTIVE_SIMULATIONS_PER_TENANT):
+            raise HTTPException(
+                status_code=429,
+                detail=(
+                    "Too many active simulations for this tenant. "
+                    "Stop an existing run before starting another."
+                ),
+            )
+        if len(simulations) >= max(1, MAX_SIMULATION_HISTORY_PER_TENANT):
+            raise HTTPException(
+                status_code=429,
+                detail="Simulation history limit reached for this tenant. Purge old runs before creating new ones.",
+            )
+
+        # Per-simulation runtime log
+        simulation_logs_dir = tenant_root / "simulation_logs"
+        simulation_logs_dir.mkdir(parents=True, exist_ok=True)
+        log_path = simulation_logs_dir / f"{sim_id}.log"
+        process = _spawn_simulation_process(str(config_path), str(log_path), env=env)
         
         new_sim = {
             "id": sim_id,
@@ -599,7 +712,7 @@ async def start_simulation(
         raise
     except Exception as e:
         _audit_log(request, action="simulation.start", status="error", details={"error": str(e)})
-        raise HTTPException(status_code=500, detail=str(e))
+        raise HTTPException(status_code=500, detail="Failed to start simulation")
 
 
 @app.get("/api/simulations")
@@ -642,7 +755,7 @@ async def get_simulations(request: Request, _: None = Depends(require_read_auth)
                         updated = True
                         continue
                 try:
-                    # Check if process exists (sent signal 0 does no harm)
+                    # Check if process exists (signal 0 does no harm)
                     os.kill(sim["pid"], 0)
                 except OSError:
                     log_path_raw = sim.get("log_path")
@@ -691,7 +804,8 @@ async def get_simulations(request: Request, _: None = Depends(require_read_auth)
                 
         return {"simulations": simulations}
     except Exception as e:
-        return {"simulations": [], "error": str(e)}
+        _audit_log(request, action="simulation.list", status="error", details={"error": str(e)})
+        raise HTTPException(status_code=500, detail="Failed to load simulations")
 
 
 @app.post("/api/simulations/{sim_id}/stop")
@@ -740,7 +854,7 @@ async def stop_simulation(sim_id: str, request: Request, _: None = Depends(requi
              status="error",
              details={"simulation_id": sim_id, "error": str(e)},
          )
-         raise HTTPException(status_code=500, detail=str(e))
+         raise HTTPException(status_code=500, detail="Failed to stop simulation")
 
 
 @app.get("/api/agents")
@@ -872,6 +986,7 @@ async def get_agents(request: Request, _: None = Depends(require_read_auth)):
 @app.get("/api/agents/{signature}")
 async def get_agent_details(signature: str, request: Request, _: None = Depends(require_read_auth)):
     """Get detailed information about a specific agent"""
+    signature = _validate_agent_signature(signature)
     data_path = _get_tenant_paths(request)["data_path"]
     agent_dir = data_path / signature
 
@@ -936,6 +1051,7 @@ async def get_agent_details(signature: str, request: Request, _: None = Depends(
 @app.get("/api/agents/{signature}/tasks")
 async def get_agent_tasks(signature: str, request: Request, _: None = Depends(require_read_auth)):
     """Get all tasks assigned to an agent"""
+    signature = _validate_agent_signature(signature)
     data_path = _get_tenant_paths(request)["data_path"]
     agent_dir = data_path / signature
 
@@ -985,6 +1101,7 @@ async def get_agent_tasks(signature: str, request: Request, _: None = Depends(re
 @app.get("/api/agents/{signature}/terminal-log/{date}")
 async def get_terminal_log(signature: str, date: str, request: Request, _: None = Depends(require_read_auth)):
     """Get terminal log for an agent on a specific date"""
+    signature = _validate_agent_signature(signature)
     if not re.fullmatch(r"^\d{4}-\d{2}-\d{2}$", date):
         raise HTTPException(status_code=400, detail="Invalid date format")
 
@@ -1017,6 +1134,7 @@ async def get_terminal_log(signature: str, date: str, request: Request, _: None 
 @app.get("/api/agents/{signature}/learning")
 async def get_agent_learning(signature: str, request: Request, _: None = Depends(require_read_auth)):
     """Get agent's learning memory"""
+    signature = _validate_agent_signature(signature)
     data_path = _get_tenant_paths(request)["data_path"]
     agent_dir = data_path / signature
 
@@ -1056,6 +1174,7 @@ async def get_agent_learning(signature: str, request: Request, _: None = Depends
 @app.get("/api/agents/{signature}/economic")
 async def get_agent_economic(signature: str, request: Request, _: None = Depends(require_read_auth)):
     """Get economic metrics for an agent"""
+    signature = _validate_agent_signature(signature)
     data_path = _get_tenant_paths(request)["data_path"]
     agent_dir = data_path / signature
 
@@ -1275,10 +1394,17 @@ async def set_hidden_agents(request: Request, body: dict, _: None = Depends(requ
     """Set list of hidden agent signatures"""
     hidden_agents_path = _get_tenant_paths(request)["hidden_agents_path"]
     hidden = body.get("hidden", [])
+    if not isinstance(hidden, list):
+        raise HTTPException(status_code=400, detail="Invalid hidden agent payload")
+    if len(hidden) > 1000:
+        raise HTTPException(status_code=400, detail="Too many hidden agents")
+    normalized = []
+    for value in hidden:
+        normalized.append(_validate_agent_signature(str(value)))
     hidden_agents_path.parent.mkdir(parents=True, exist_ok=True)
     with open(hidden_agents_path, 'w') as f:
-        json.dump(hidden, f)
-    _audit_log(request, action="settings.hidden_agents.update", status="allowed", details={"count": len(hidden)})
+        json.dump(normalized, f)
+    _audit_log(request, action="settings.hidden_agents.update", status="allowed", details={"count": len(normalized)})
     return {"status": "ok"}
 
 @app.get("/api/settings/displaying-names")
@@ -1311,7 +1437,7 @@ async def websocket_endpoint(websocket: WebSocket):
             authorization=auth_header,
             x_clawwork_token=websocket.headers.get("x-clawwork-token"),
         )
-        if not _validate_api_token(token):
+        if not _validate_auth_token_for_tenant(token, tenant_id):
             await websocket.close(code=1008)
             return
 
