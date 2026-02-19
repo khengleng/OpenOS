@@ -652,6 +652,7 @@ async def get_agents(request: Request, _: None = Depends(require_read_auth)):
     simulations_path = tenant_paths["simulations_path"]
     running_simulations: List[dict] = []
     running_by_signature: Dict[str, List[dict]] = {}
+    latest_by_signature: Dict[str, dict] = {}
     consumed_sim_ids = set()
 
     if simulations_path.exists():
@@ -659,9 +660,11 @@ async def get_agents(request: Request, _: None = Depends(require_read_auth)):
             with open(simulations_path, "r") as f:
                 simulations = json.load(f)
             for sim in simulations:
+                signature = (sim.get("signature") or "").strip()
+                if signature:
+                    latest_by_signature[signature] = sim
                 if sim.get("status") != "running":
                     continue
-                signature = (sim.get("signature") or "").strip()
                 if not signature:
                     continue
                 try:
@@ -688,6 +691,7 @@ async def get_agents(request: Request, _: None = Depends(require_read_auth)):
                     "total_token_cost": 0,
                     "is_running": True,
                     "simulation_id": sim.get("id"),
+                    "model": sim.get("model"),
                 }
                 for sim in running_simulations
             ]
@@ -728,6 +732,7 @@ async def get_agents(request: Request, _: None = Depends(require_read_auth)):
                 consumed_sim_ids.add(sim_id)
 
             if balance_data or is_running:
+                latest = latest_by_signature.get(signature) or {}
                 agents.append({
                     "signature": signature,
                     "balance": (balance_data or {}).get("balance", 0),
@@ -737,7 +742,8 @@ async def get_agents(request: Request, _: None = Depends(require_read_auth)):
                     "current_date": current_date,
                     "total_token_cost": (balance_data or {}).get("total_token_cost", 0),
                     "is_running": is_running,
-                    "simulation_id": sim_id
+                    "simulation_id": sim_id,
+                    "model": latest.get("model"),
                 })
 
     for sim in running_simulations:
@@ -756,6 +762,7 @@ async def get_agents(request: Request, _: None = Depends(require_read_auth)):
                 "total_token_cost": 0,
                 "is_running": True,
                 "simulation_id": sim.get("id"),
+                "model": sim.get("model"),
             }
         )
 

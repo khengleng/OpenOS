@@ -2,10 +2,11 @@
 
 import { Card, CardContent, CardFooter, CardHeader, CardTitle } from "@/components/ui/card";
 import { Badge } from "@/components/ui/badge";
-import { Activity, CircleDollarSign, Coins, PowerOff, Loader2 } from "lucide-react";
+import { Activity, CircleDollarSign, Coins, PowerOff, Loader2, RotateCcw } from "lucide-react";
 import { Button } from "@/components/ui/button";
 import { useState } from "react";
 import { useSWRConfig } from "swr";
+import Link from "next/link";
 
 const API_BASE = "/api/clawwork";
 
@@ -19,6 +20,7 @@ export interface Agent {
     total_token_cost: number;
     is_running?: boolean;
     simulation_id?: string;
+    model?: string;
 }
 
 interface AgentCardProps {
@@ -28,6 +30,7 @@ interface AgentCardProps {
 export function AgentCard({ agent }: AgentCardProps) {
     const isThriving = agent.survival_status === "thriving";
     const [stopping, setStopping] = useState(false);
+    const [restarting, setRestarting] = useState(false);
     const { mutate } = useSWRConfig();
     const isRunning = Boolean(agent.is_running);
     const parsedCurrentDate = agent.current_date ? new Date(agent.current_date) : null;
@@ -52,6 +55,66 @@ export function AgentCard({ agent }: AgentCardProps) {
             alert("Error stopping agent");
         } finally {
             setStopping(false);
+        }
+    };
+
+    const handleRestart = async () => {
+        const signature = agent.signature.replace(/\s\([^)]+\)$/, "");
+        if (!signature) return;
+        setRestarting(true);
+        try {
+            const config = {
+                livebench: {
+                    date_range: {
+                        init_date: new Date().toISOString().split("T")[0],
+                        end_date: new Date(Date.now() + 10 * 24 * 60 * 60 * 1000).toISOString().split("T")[0],
+                    },
+                    economic: {
+                        initial_balance: Math.max(10, Number(agent.balance || 10)),
+                        token_pricing: {
+                            input_per_1m: 2.5,
+                            output_per_1m: 10.0,
+                        },
+                    },
+                    agents: [
+                        {
+                            signature,
+                            basemodel: agent.model || "gpt-4o",
+                            enabled: true,
+                            tasks_per_day: 1,
+                            supports_multimodal: true,
+                        },
+                    ],
+                    agent_params: {
+                        max_steps: 20,
+                        max_retries: 3,
+                        base_delay: 0.5,
+                        tasks_per_day: 1,
+                    },
+                    evaluation: {
+                        use_llm_evaluation: true,
+                    },
+                    data_path: "./livebench/data/agent_data",
+                    gdpval_path: "./gdpval",
+                },
+            };
+
+            const response = await fetch(`${API_BASE}/simulations`, {
+                method: "POST",
+                headers: { "Content-Type": "application/json" },
+                body: JSON.stringify({ config }),
+            });
+            if (!response.ok) {
+                const raw = await response.text();
+                throw new Error(raw || "Failed to restart agent");
+            }
+            mutate(`${API_BASE}/agents`);
+            mutate(`${API_BASE}/simulations`);
+        } catch (error) {
+            console.error("Error restarting agent:", error);
+            alert("Error restarting agent");
+        } finally {
+            setRestarting(false);
         }
     };
 
@@ -107,12 +170,18 @@ export function AgentCard({ agent }: AgentCardProps) {
                 </div>
             </CardContent>
             <CardFooter className="flex gap-2">
-                <Button variant="outline" className="flex-1" disabled>
+                <Button asChild variant="outline" className="flex-1">
+                    <Link href={`/agents/${encodeURIComponent(agent.signature)}`}>
                     View Details
+                    </Link>
                 </Button>
-                {isRunning && (
+                {isRunning ? (
                     <Button variant="destructive" size="icon" onClick={handleStop} disabled={stopping} title="Stop Agent">
                         {stopping ? <Loader2 className="h-4 w-4 animate-spin" /> : <PowerOff className="h-4 w-4" />}
+                    </Button>
+                ) : (
+                    <Button variant="secondary" size="icon" onClick={handleRestart} disabled={restarting} title="Restart Agent">
+                        {restarting ? <Loader2 className="h-4 w-4 animate-spin" /> : <RotateCcw className="h-4 w-4" />}
                     </Button>
                 )}
             </CardFooter>

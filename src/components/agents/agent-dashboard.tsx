@@ -106,8 +106,8 @@ export function AgentDashboard() {
     );
     const simulationAgents: Agent[] = runningSimulations
         .filter((sim) => !existingSimulationIds.has(sim.id))
-        .map((sim, index) => ({
-            signature: `${sim.signature || "agent"}-${sim.id.slice(0, 8)}-${index}`,
+        .map((sim) => ({
+            signature: sim.signature || "agent",
             balance: 0,
             net_worth: 0,
             survival_status: "unknown",
@@ -116,6 +116,7 @@ export function AgentDashboard() {
             total_token_cost: 0,
             is_running: true,
             simulation_id: sim.id,
+            model: sim.model,
         }));
     const visibleAgents = [...agents, ...simulationAgents];
 
