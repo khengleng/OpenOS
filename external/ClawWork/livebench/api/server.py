@@ -576,7 +576,9 @@ async def get_agents(request: Request, _: None = Depends(require_read_auth)):
     tenant_paths = _get_tenant_paths(request)
     data_path = tenant_paths["data_path"]
     simulations_path = tenant_paths["simulations_path"]
-    running_simulations: Dict[str, dict] = {}
+    running_simulations: List[dict] = []
+    running_by_signature: Dict[str, List[dict]] = {}
+    consumed_sim_ids = set()
 
     if simulations_path.exists():
         try:
@@ -590,18 +592,20 @@ async def get_agents(request: Request, _: None = Depends(require_read_auth)):
                     continue
                 try:
                     os.kill(sim["pid"], 0)
-                    running_simulations[signature] = sim
+                    running_simulations.append(sim)
+                    running_by_signature.setdefault(signature, []).append(sim)
                 except OSError:
                     # Ignore stale process entries.
                     continue
         except Exception:
-            running_simulations = {}
+            running_simulations = []
+            running_by_signature = {}
 
     if not data_path.exists():
         return {
             "agents": [
                 {
-                    "signature": signature,
+                    "signature": f"{sim.get('signature')} ({str(sim.get('id', ''))[:8]})",
                     "balance": 0,
                     "net_worth": 0,
                     "survival_status": "unknown",
@@ -611,7 +615,7 @@ async def get_agents(request: Request, _: None = Depends(require_read_auth)):
                     "is_running": True,
                     "simulation_id": sim.get("id"),
                 }
-                for signature, sim in running_simulations.items()
+                for sim in running_simulations
             ]
         }
 
@@ -642,9 +646,12 @@ async def get_agents(request: Request, _: None = Depends(require_read_auth)):
                         current_activity = decision.get("activity")
                         current_date = decision.get("date")
 
-            sim = running_simulations.get(signature)
+            sim_candidates = running_by_signature.get(signature, [])
+            sim = sim_candidates[0] if sim_candidates else None
             is_running = sim is not None
             sim_id = sim.get("id") if sim else None
+            if sim_id:
+                consumed_sim_ids.add(sim_id)
 
             if balance_data or is_running:
                 agents.append({
@@ -659,12 +666,14 @@ async def get_agents(request: Request, _: None = Depends(require_read_auth)):
                     "simulation_id": sim_id
                 })
 
-    for signature, sim in running_simulations.items():
-        if signature in seen_signatures:
+    for sim in running_simulations:
+        sim_id = sim.get("id")
+        if sim_id in consumed_sim_ids:
             continue
+        signature = (sim.get("signature") or "Agent").strip()
         agents.append(
             {
-                "signature": signature,
+                "signature": f"{signature} ({str(sim_id or '')[:8]})",
                 "balance": 0,
                 "net_worth": 0,
                 "survival_status": "unknown",
