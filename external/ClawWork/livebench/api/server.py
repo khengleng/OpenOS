@@ -126,6 +126,19 @@ def _read_log_tail(log_path: Path, max_lines: int = 12) -> Optional[str]:
     return "\n".join(tail[-3:]) if tail else meaningful[-1]
 
 
+def _is_simulation_completed(log_path: Path) -> bool:
+    if not log_path.exists():
+        return False
+    try:
+        lines = log_path.read_text(errors="replace").splitlines()
+    except Exception:
+        return False
+    if not lines:
+        return False
+    # main.py prints this on successful completion.
+    return any("LIVEBENCH SIMULATION COMPLETE" in line for line in lines[-200:])
+
+
 def _get_client_ip(request: Request) -> str:
     forwarded_for = request.headers.get("x-forwarded-for", "")
     if forwarded_for:
@@ -562,7 +575,9 @@ async def get_simulations(request: Request, _: None = Depends(require_read_auth)
                     # Check if process exists (sent signal 0 does no harm)
                     os.kill(sim["pid"], 0)
                 except OSError:
-                    sim["status"] = "terminated"
+                    log_path_raw = sim.get("log_path")
+                    log_path = Path(log_path_raw) if log_path_raw else None
+                    sim["status"] = "completed" if (log_path and _is_simulation_completed(log_path)) else "terminated"
                     sim["end_time"] = datetime.now().isoformat()
                     if not sim.get("termination_hint") and sim.get("log_path"):
                         tail = _read_log_tail(Path(sim["log_path"]))

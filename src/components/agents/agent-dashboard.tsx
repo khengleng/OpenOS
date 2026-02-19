@@ -19,6 +19,7 @@ type Simulation = {
 
 const statusBadgeClass = (status: string) => {
     if (status === "running") return "bg-green-100 text-green-800 border-green-200";
+    if (status === "completed") return "bg-blue-100 text-blue-800 border-blue-200";
     if (status === "stopped") return "bg-amber-100 text-amber-800 border-amber-200";
     if (status === "terminated") return "bg-red-100 text-red-800 border-red-200";
     return "bg-muted text-muted-foreground";
@@ -97,6 +98,7 @@ export function AgentDashboard() {
         return bTime - aTime;
     });
     const runningSimulations = simulations.filter((sim) => sim.status === "running");
+    const completedCount = simulations.filter((sim) => normalizeStatus(sim.status) === "completed").length;
     const stoppedCount = simulations.filter((sim) => normalizeStatus(sim.status) === "stopped").length;
     const terminatedCount = simulations.filter((sim) => normalizeStatus(sim.status) === "terminated").length;
     const existingSimulationIds = new Set(
@@ -126,7 +128,7 @@ export function AgentDashboard() {
             <div className="grid gap-4 sm:grid-cols-2 xl:grid-cols-4">
                 <Card>
                     <CardHeader className="pb-2">
-                        <CardTitle className="text-sm font-medium">Active Agents</CardTitle>
+                        <CardTitle className="text-sm font-medium">Agent Records</CardTitle>
                     </CardHeader>
                     <CardContent className="text-2xl font-semibold">{visibleAgents.length}</CardContent>
                 </Card>
@@ -138,15 +140,15 @@ export function AgentDashboard() {
                 </Card>
                 <Card>
                     <CardHeader className="pb-2">
-                        <CardTitle className="text-sm font-medium">Stopped</CardTitle>
+                        <CardTitle className="text-sm font-medium">Completed</CardTitle>
                     </CardHeader>
-                    <CardContent className="text-2xl font-semibold">{stoppedCount}</CardContent>
+                    <CardContent className="text-2xl font-semibold">{completedCount}</CardContent>
                 </Card>
                 <Card>
                     <CardHeader className="pb-2">
-                        <CardTitle className="text-sm font-medium">Terminated</CardTitle>
+                        <CardTitle className="text-sm font-medium">Stopped/Failed</CardTitle>
                     </CardHeader>
-                    <CardContent className="text-2xl font-semibold">{terminatedCount}</CardContent>
+                    <CardContent className="text-2xl font-semibold">{stoppedCount + terminatedCount}</CardContent>
                 </Card>
             </div>
 
