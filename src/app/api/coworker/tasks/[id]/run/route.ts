@@ -1,4 +1,5 @@
 import { NextRequest, NextResponse } from "next/server";
+import { SignJWT } from "jose";
 import { createClient } from "@/lib/supabase/server";
 
 type TaskStatus = "todo" | "in_progress" | "blocked" | "done";
@@ -28,8 +29,37 @@ function parseSimulationId(payload: unknown): string {
     return typeof raw === "string" ? raw : "";
 }
 
+function getRawClawworkBaseUrl(): string {
+    return (process.env.CLAWWORK_INTERNAL_URL || process.env.NEXT_PUBLIC_CLAWWORK_API_URL || "").trim();
+}
+
+function normalizeBaseUrl(raw: string): string {
+    if (!raw) return "";
+    const unquoted = raw.replace(/^['"]|['"]$/g, "");
+    if (/^https?:\/\//i.test(unquoted)) return unquoted;
+    return `https://${unquoted}`;
+}
+
+async function generateTenantJwt(tenantId: string): Promise<string> {
+    const secret = process.env.CLAWWORK_JWT_SECRET;
+    if (!secret) return "";
+
+    const issuer = (process.env.CLAWWORK_JWT_ISSUER || "").trim();
+    const audience = (process.env.CLAWWORK_JWT_AUDIENCE || "").trim();
+    const algs = (process.env.CLAWWORK_JWT_ALGORITHMS || "HS256")
+        .split(",")
+        .map((v) => v.trim())
+        .filter(Boolean);
+    const alg = algs[0] || "HS256";
+
+    let token = new SignJWT({ tenant_id: tenantId }).setProtectedHeader({ alg });
+    if (issuer) token = token.setIssuer(issuer);
+    if (audience) token = token.setAudience(audience);
+    return token.setIssuedAt().setExpirationTime("10m").sign(new TextEncoder().encode(secret));
+}
+
 export async function POST(
-    request: NextRequest,
+    _request: NextRequest,
     context: { params: Promise<{ id: string }> },
 ) {
     const { id } = await context.params;
@@ -115,14 +145,29 @@ export async function POST(
         },
     };
 
+    const clawworkBase = normalizeBaseUrl(getRawClawworkBaseUrl());
+    if (!clawworkBase) {
+        return NextResponse.json(
+            { error: "Missing CLAWWORK_INTERNAL_URL or NEXT_PUBLIC_CLAWWORK_API_URL" },
+            { status: 500 },
+        );
+    }
+
     let launchPayload: unknown = null;
     try {
-        const launchResponse = await fetch(`${request.nextUrl.origin}/api/clawwork/simulations`, {
+        const url = new URL("/api/simulations", clawworkBase);
+        const headers = new Headers({ "content-type": "application/json", "x-tenant-id": user.id });
+        const jwt = await generateTenantJwt(user.id);
+        if (jwt) {
+            headers.set("authorization", `Bearer ${jwt}`);
+        } else {
+            const apiToken = (process.env.CLAWWORK_API_TOKEN || "").trim();
+            if (apiToken) headers.set("authorization", `Bearer ${apiToken}`);
+        }
+
+        const launchResponse = await fetch(url, {
             method: "POST",
-            headers: {
-                "content-type": "application/json",
-                cookie: request.headers.get("cookie") || "",
-            },
+            headers,
             body: JSON.stringify({ config }),
             cache: "no-store",
         });
@@ -134,6 +179,17 @@ export async function POST(
         }
 
         if (!launchResponse.ok) {
+            const contentType = launchResponse.headers.get("content-type") || "";
+            if (launchResponse.status === 404 && contentType.includes("text/html")) {
+                return NextResponse.json(
+                    {
+                        error: "ClawWork upstream misconfigured",
+                        detail:
+                            "Received HTML 404 from upstream. Check CLAWWORK_INTERNAL_URL/NEXT_PUBLIC_CLAWWORK_API_URL points to ClawWork API service.",
+                    },
+                    { status: 502 },
+                );
+            }
             const detail = typeof launchPayload === "object" && launchPayload !== null
                 ? String(
                     (launchPayload as { detail?: unknown; error?: unknown }).detail
