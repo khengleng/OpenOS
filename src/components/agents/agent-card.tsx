@@ -29,6 +29,11 @@ export function AgentCard({ agent }: AgentCardProps) {
     const isThriving = agent.survival_status === "thriving";
     const [stopping, setStopping] = useState(false);
     const { mutate } = useSWRConfig();
+    const isRunning = Boolean(agent.is_running);
+    const parsedCurrentDate = agent.current_date ? new Date(agent.current_date) : null;
+    const hasValidDate = Boolean(parsedCurrentDate && !Number.isNaN(parsedCurrentDate.getTime()));
+    const activityText = agent.current_activity || (isRunning ? "Starting simulation" : "No active run");
+    const activityMeta = hasValidDate ? parsedCurrentDate!.toLocaleString() : null;
 
     const handleStop = async () => {
         if (!agent.simulation_id) return;
@@ -52,7 +57,7 @@ export function AgentCard({ agent }: AgentCardProps) {
 
     return (
         <Card className="hover:shadow-lg transition-shadow relative overflow-hidden">
-            {agent.is_running && (
+            {isRunning && (
                 <div className="absolute top-0 right-0 p-2">
                     <span className="relative flex h-3 w-3">
                         <span className="animate-ping absolute inline-flex h-full w-full rounded-full bg-green-400 opacity-75"></span>
@@ -68,8 +73,10 @@ export function AgentCard({ agent }: AgentCardProps) {
                     <Badge variant={isThriving ? "default" : "secondary"} className={isThriving ? "bg-green-600 hover:bg-green-700" : ""}>
                         {agent.survival_status}
                     </Badge>
-                    {agent.is_running && (
+                    {isRunning ? (
                         <Badge variant="outline" className="border-green-500 text-green-500">Live</Badge>
+                    ) : (
+                        <Badge variant="outline" className="border-muted-foreground/30 text-muted-foreground">Inactive</Badge>
                     )}
                 </div>
             </CardHeader>
@@ -89,24 +96,21 @@ export function AgentCard({ agent }: AgentCardProps) {
                             <p className="text-muted-foreground">${agent.total_token_cost.toFixed(2)}</p>
                         </div>
                     </div>
-                    {agent.current_activity && (
-                        <div className="flex items-center gap-4">
-                            <Activity className="h-4 w-4 text-muted-foreground" />
-                            <div className="flex-1 space-y-1">
-                                <p className="text-sm font-medium leading-none">Current Activity</p>
-                                <p className="text-xs text-muted-foreground">
-                                    {agent.current_activity} ({agent.current_date})
-                                </p>
-                            </div>
+                    <div className="flex items-center gap-4">
+                        <Activity className="h-4 w-4 text-muted-foreground" />
+                        <div className="flex-1 space-y-1">
+                            <p className="text-sm font-medium leading-none">Current Activity</p>
+                            <p className="text-xs text-muted-foreground">{activityText}</p>
+                            {activityMeta ? <p className="text-xs text-muted-foreground">Updated {activityMeta}</p> : null}
                         </div>
-                    )}
+                    </div>
                 </div>
             </CardContent>
             <CardFooter className="flex gap-2">
                 <Button variant="outline" className="flex-1" disabled>
                     View Details
                 </Button>
-                {agent.is_running && (
+                {isRunning && (
                     <Button variant="destructive" size="icon" onClick={handleStop} disabled={stopping} title="Stop Agent">
                         {stopping ? <Loader2 className="h-4 w-4 animate-spin" /> : <PowerOff className="h-4 w-4" />}
                     </Button>
