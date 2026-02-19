@@ -10,6 +10,17 @@ import { Plus } from "lucide-react";
 import { useSWRConfig } from "swr";
 
 const API_BASE = "/api/clawwork";
+const PROVIDER_MODELS = {
+    openai: [
+        { label: "GPT-4o", value: "gpt-4o" },
+        { label: "GPT-4 Turbo", value: "gpt-4-turbo" },
+    ],
+    anthropic: [
+        { label: "Claude 3.5 Sonnet", value: "anthropic/claude-3.5-sonnet" },
+        { label: "Claude 3 Opus", value: "anthropic/claude-3-opus" },
+    ],
+} as const;
+type Provider = keyof typeof PROVIDER_MODELS;
 
 export function LaunchAgentDialog() {
     const suggestAgentName = () => `agent-${Date.now().toString().slice(-6)}`;
@@ -20,7 +31,8 @@ export function LaunchAgentDialog() {
 
     // Form state
     const [agentName, setAgentName] = useState(suggestAgentName());
-    const [model, setModel] = useState("gpt-4o");
+    const [provider, setProvider] = useState<Provider>("openai");
+    const [model, setModel] = useState(PROVIDER_MODELS.openai[0].value);
     const [initialBalance, setInitialBalance] = useState("10");
 
 
@@ -122,6 +134,8 @@ export function LaunchAgentDialog() {
                     onClick={() => {
                         setErrorMessage("");
                         setAgentName(suggestAgentName());
+                        setProvider("openai");
+                        setModel(PROVIDER_MODELS.openai[0].value);
                         setOpen(true);
                     }}
                 >
@@ -149,6 +163,27 @@ export function LaunchAgentDialog() {
                         />
                     </div>
                     <div className="grid grid-cols-4 items-center gap-4">
+                        <Label htmlFor="provider" className="text-right">
+                            Provider
+                        </Label>
+                        <Select
+                            value={provider}
+                            onValueChange={(value) => {
+                                const selected = value as Provider;
+                                setProvider(selected);
+                                setModel(PROVIDER_MODELS[selected][0].value);
+                            }}
+                        >
+                            <SelectTrigger className="col-span-3">
+                                <SelectValue placeholder="Select provider" />
+                            </SelectTrigger>
+                            <SelectContent>
+                                <SelectItem value="openai">OpenAI</SelectItem>
+                                <SelectItem value="anthropic">Anthropic</SelectItem>
+                            </SelectContent>
+                        </Select>
+                    </div>
+                    <div className="grid grid-cols-4 items-center gap-4">
                         <Label htmlFor="model" className="text-right">
                             Model
                         </Label>
@@ -157,13 +192,17 @@ export function LaunchAgentDialog() {
                                 <SelectValue placeholder="Select model" />
                             </SelectTrigger>
                             <SelectContent>
-                                <SelectItem value="gpt-4o">GPT-4o</SelectItem>
-                                <SelectItem value="gpt-4-turbo">GPT-4 Turbo</SelectItem>
-                                <SelectItem value="claude-3-opus">Claude 3 Opus</SelectItem>
-                                <SelectItem value="claude-3-sonnet">Claude 3.5 Sonnet</SelectItem>
+                                {PROVIDER_MODELS[provider].map((entry) => (
+                                    <SelectItem key={entry.value} value={entry.value}>
+                                        {entry.label}
+                                    </SelectItem>
+                                ))}
                             </SelectContent>
                         </Select>
                     </div>
+                    <p className="text-xs text-muted-foreground">
+                        Select the AI provider/model for this agent. Ensure the matching API credentials are configured in ClawWork.
+                    </p>
                     <div className="grid grid-cols-4 items-center gap-4">
                         <Label htmlFor="balance" className="text-right">
                             Budget ($)
