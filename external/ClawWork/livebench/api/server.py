@@ -98,8 +98,32 @@ def _read_log_tail(log_path: Path, max_lines: int = 12) -> Optional[str]:
         return None
     if not lines:
         return None
-    tail = [line for line in lines[-max_lines:] if line.strip()]
-    return "\n".join(tail) if tail else None
+    meaningful = [line.strip() for line in lines if line.strip()]
+    if not meaningful:
+        return None
+
+    # Prefer the most relevant failure line over separators/banners.
+    error_markers = (
+        "traceback",
+        "error",
+        "exception",
+        "failed",
+        "unauthorized",
+        "invalid",
+        "rate limit",
+        "authentication",
+        "anthropic",
+        "openai",
+    )
+    for line in reversed(meaningful):
+        normalized = line.lower()
+        if set(line) <= {"=", "-", "*", "#"}:
+            continue
+        if any(marker in normalized for marker in error_markers):
+            return line
+
+    tail = [line for line in meaningful[-max_lines:] if not (set(line) <= {"=", "-", "*", "#"})]
+    return "\n".join(tail[-3:]) if tail else meaningful[-1]
 
 
 def _get_client_ip(request: Request) -> str:
