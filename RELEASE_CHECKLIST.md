@@ -77,6 +77,7 @@ Owner: `@qa-owner`
 Command examples:
 ```bash
 OPENOS_URL=https://nexus-os-production.up.railway.app npm run smoke:railway
+OPENOS_URL=https://nexus-os-production.up.railway.app CLAWWORK_URL=https://clawwork-backend-production.up.railway.app npm run release:preflight
 curl -s https://nexus-os-production.up.railway.app/api/readiness
 ```
 

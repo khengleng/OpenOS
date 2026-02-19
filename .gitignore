@@ -25,7 +25,9 @@
 # misc
 .DS_Store
 *.pem
-/scripts/
+/scripts/*
+!/scripts/
+!/scripts/release_preflight.sh
 
 # Vendored ClawWork runtime/generated artifacts (keep source code tracked)
 /external/ClawWork/.git/
