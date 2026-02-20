@@ -45,9 +45,23 @@ type AppRole = "maker" | "checker" | "admin";
 const fetcher = async <T,>(url: string): Promise<T> => {
     const res = await fetch(url);
     const txt = await res.text();
-    if (!res.ok) throw new Error(txt || `HTTP ${res.status}`);
+    if (!res.ok) {
+        throw new Error(parseApiError(txt, res.status));
+    }
     return JSON.parse(txt) as T;
 };
+
+function parseApiError(text: string, status?: number): string {
+    if (!text) return status ? `HTTP ${status}` : "Request failed";
+    try {
+        const payload = JSON.parse(text) as Record<string, unknown>;
+        const message = String(payload.error || payload.detail || payload.message || "").trim();
+        if (message) return message;
+    } catch {
+        // Keep raw text fallback when response is not JSON.
+    }
+    return text;
+}
 
 const statusLabel: Record<TaskStatus, string> = {
     todo: "To Do",
@@ -92,6 +106,7 @@ export function CoworkerTaskBoard() {
     const [approvalAssigneeDraft, setApprovalAssigneeDraft] = useState<Record<string, string>>({});
     const [submitting, setSubmitting] = useState(false);
     const [runningTaskId, setRunningTaskId] = useState<string | null>(null);
+    const [exportingFormat, setExportingFormat] = useState<"csv" | "json" | null>(null);
     const [message, setMessage] = useState<string>("");
 
     const tasks = data?.tasks || [];
@@ -144,7 +159,7 @@ export function CoworkerTaskBoard() {
                 }),
             });
             const txt = await res.text();
-            if (!res.ok) throw new Error(txt || "Failed to create task");
+            if (!res.ok) throw new Error(parseApiError(txt, res.status));
             setTitle("");
             setDescription("");
             setPriority("medium");
@@ -166,7 +181,7 @@ export function CoworkerTaskBoard() {
             body: JSON.stringify(patch),
         });
         const txt = await res.text();
-        if (!res.ok) throw new Error(txt || "Update failed");
+        if (!res.ok) throw new Error(parseApiError(txt, res.status));
         await mutate();
     }
 
@@ -187,7 +202,7 @@ export function CoworkerTaskBoard() {
                 method: "POST",
             });
             const txt = await res.text();
-            if (!res.ok) throw new Error(txt || "Failed to run task");
+            if (!res.ok) throw new Error(parseApiError(txt, res.status));
             setMessage("Task launched.");
             await mutate();
         } catch (err) {
@@ -257,11 +272,76 @@ export function CoworkerTaskBoard() {
         setPriority(template.priority);
     }
 
+    async function exportTasks(format: "csv" | "json") {
+        setExportingFormat(format);
+        setMessage("");
+        try {
+            const res = await fetch(`/api/coworker/tasks/export?format=${format}`, { method: "GET" });
+            const contentType = res.headers.get("content-type") || "";
+            if (!res.ok) {
+                const txt = await res.text();
+                throw new Error(parseApiError(txt, res.status));
+            }
+
+            if (format === "csv") {
+                const blob = await res.blob();
+                const url = window.URL.createObjectURL(blob);
+                const link = document.createElement("a");
+                link.href = url;
+                link.download = `coworker_tasks_${new Date().toISOString().slice(0, 10)}.csv`;
+                document.body.appendChild(link);
+                link.click();
+                link.remove();
+                window.URL.revokeObjectURL(url);
+                setMessage("CSV exported.");
+                return;
+            }
+
+            const jsonData = contentType.includes("application/json")
+                ? await res.json()
+                : await res.text();
+            const jsonBlob = new Blob([JSON.stringify(jsonData, null, 2)], { type: "application/json" });
+            const url = window.URL.createObjectURL(jsonBlob);
+            const link = document.createElement("a");
+            link.href = url;
+            link.download = `coworker_tasks_${new Date().toISOString().slice(0, 10)}.json`;
+            document.body.appendChild(link);
+            link.click();
+            link.remove();
+            window.URL.revokeObjectURL(url);
+            setMessage("JSON exported.");
+        } catch (err) {
+            setMessage(err instanceof Error ? err.message : "Failed to export tasks");
+        } finally {
+            setExportingFormat(null);
+        }
+    }
+
     return (
         <div className="space-y-4">
             <Card>
                 <CardHeader>
-                    <CardTitle>The Coworker Layer</CardTitle>
+                    <div className="flex items-center justify-between gap-3">
+                        <CardTitle>The Coworker Layer</CardTitle>
+                        <div className="flex items-center gap-2">
+                            <Button
+                                variant="outline"
+                                size="sm"
+                                onClick={() => exportTasks("json")}
+                                disabled={!!exportingFormat}
+                            >
+                                {exportingFormat === "json" ? "Exporting..." : "Export JSON"}
+                            </Button>
+                            <Button
+                                variant="outline"
+                                size="sm"
+                                onClick={() => exportTasks("csv")}
+                                disabled={!!exportingFormat}
+                            >
+                                {exportingFormat === "csv" ? "Exporting..." : "Export CSV"}
+                            </Button>
+                        </div>
+                    </div>
                 </CardHeader>
                 <CardContent className="grid gap-4 md:grid-cols-2">
                     <div className="space-y-3">
