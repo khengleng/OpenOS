@@ -1,12 +1,12 @@
 import { NextResponse } from "next/server";
 import { createClient } from "@/lib/supabase/server";
-
-function hasSupabaseConfig() {
-    return Boolean(process.env.NEXT_PUBLIC_SUPABASE_URL && process.env.NEXT_PUBLIC_SUPABASE_ANON_KEY);
-}
+import { cookies } from "next/headers";
 
 export async function getAuthenticatedUserId(): Promise<string | null> {
     try {
+        const cookieStore = await cookies();
+        console.log("[route-auth] cookie keys:", cookieStore.getAll().map(c => c.name).join(", "));
+
         const supabase = await createClient();
         const {
             data: { user },
