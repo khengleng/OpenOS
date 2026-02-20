@@ -12,6 +12,16 @@ import { Select, SelectContent, SelectItem, SelectTrigger, SelectValue } from "@
 
 type TaskStatus = "todo" | "in_progress" | "blocked" | "done";
 type TaskPriority = "low" | "medium" | "high";
+type TaskTemplateCategory = "business" | "personal";
+
+type TaskTemplate = {
+    id: string;
+    name: string;
+    category: TaskTemplateCategory;
+    title: string;
+    description: string;
+    priority: TaskPriority;
+};
 
 type CoworkerTask = {
     id: string;
@@ -59,17 +69,20 @@ export function CoworkerTaskBoard() {
     const { data: simulationsData } = useSWR<{ simulations: SimulationRecord[] }>("/api/clawwork/simulations", fetcher, {
         refreshInterval: 6000,
     });
+    const { data: templatesData } = useSWR<{ templates: TaskTemplate[] }>("/api/coworker/templates", fetcher);
 
     const [title, setTitle] = useState("");
     const [description, setDescription] = useState("");
     const [priority, setPriority] = useState<TaskPriority>("medium");
     const [assignedAgent, setAssignedAgent] = useState("__unassigned");
+    const [selectedTemplateId, setSelectedTemplateId] = useState("__custom");
     const [resultDraft, setResultDraft] = useState<Record<string, string>>({});
     const [submitting, setSubmitting] = useState(false);
     const [runningTaskId, setRunningTaskId] = useState<string | null>(null);
     const [message, setMessage] = useState<string>("");
 
     const tasks = data?.tasks || [];
+    const templates = templatesData?.templates || [];
     const agentOptions = useMemo(
         () =>
             Array.from(
@@ -83,6 +96,15 @@ export function CoworkerTaskBoard() {
         for (const task of tasks) status[task.status] += 1;
         return status;
     }, [tasks]);
+
+    const templatesById = useMemo(() => {
+        const map = new Map<string, TaskTemplate>();
+        for (const template of templates) map.set(template.id, template);
+        return map;
+    }, [templates]);
+
+    const businessTemplates = templates.filter((template) => template.category === "business");
+    const personalTemplates = templates.filter((template) => template.category === "personal");
 
     async function createTask() {
         setSubmitting(true);
@@ -104,6 +126,7 @@ export function CoworkerTaskBoard() {
             setDescription("");
             setPriority("medium");
             setAssignedAgent("__unassigned");
+            setSelectedTemplateId("__custom");
             setMessage("Task created.");
             await mutate();
         } catch (err) {
@@ -161,6 +184,16 @@ export function CoworkerTaskBoard() {
         return null;
     }
 
+    function applyTemplate(value: string) {
+        setSelectedTemplateId(value);
+        if (value === "__custom") return;
+        const template = templatesById.get(value);
+        if (!template) return;
+        setTitle(template.title);
+        setDescription(template.description);
+        setPriority(template.priority);
+    }
+
     return (
         <div className="space-y-4">
             <Card>
@@ -169,6 +202,37 @@ export function CoworkerTaskBoard() {
                 </CardHeader>
                 <CardContent className="grid gap-4 md:grid-cols-2">
                     <div className="space-y-3">
+                        <div className="space-y-2">
+                            <Label>Task Template</Label>
+                            <Select value={selectedTemplateId} onValueChange={applyTemplate}>
+                                <SelectTrigger>
+                                    <SelectValue placeholder="Choose template" />
+                                </SelectTrigger>
+                                <SelectContent>
+                                    <SelectItem value="__custom">Custom Task</SelectItem>
+                                    {businessTemplates.length > 0 ? (
+                                        <SelectItem value="__header_business" disabled>
+                                            Business
+                                        </SelectItem>
+                                    ) : null}
+                                    {businessTemplates.map((template) => (
+                                        <SelectItem key={template.id} value={template.id}>
+                                            {template.name}
+                                        </SelectItem>
+                                    ))}
+                                    {personalTemplates.length > 0 ? (
+                                        <SelectItem value="__header_personal" disabled>
+                                            Personal
+                                        </SelectItem>
+                                    ) : null}
+                                    {personalTemplates.map((template) => (
+                                        <SelectItem key={template.id} value={template.id}>
+                                            {template.name}
+                                        </SelectItem>
+                                    ))}
+                                </SelectContent>
+                            </Select>
+                        </div>
                         <div className="space-y-2">
                             <Label htmlFor="task-title">Task Title</Label>
                             <Input

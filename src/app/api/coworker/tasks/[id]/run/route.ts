@@ -4,6 +4,8 @@ import { createClient } from "@/lib/supabase/server";
 
 type TaskStatus = "todo" | "in_progress" | "blocked" | "done";
 type LaunchAuthMode = "jwt" | "token" | "none";
+const RETRYABLE_LAUNCH_STATUSES = new Set([404, 502, 503, 504]);
+const sleep = (ms: number) => new Promise((resolve) => setTimeout(resolve, ms));
 
 function isMissingCoworkerTableError(error: unknown): boolean {
     const code = typeof error === "object" && error !== null && "code" in error
@@ -184,15 +186,24 @@ export async function POST(
                 cache: "no-store",
             });
 
+        const sendLaunchWithRetry = async () => {
+            let response = await sendLaunch();
+            if (RETRYABLE_LAUNCH_STATUSES.has(response.status)) {
+                await sleep(250);
+                response = await sendLaunch();
+            }
+            return response;
+        };
+
         let authMode = await applyLaunchAuth("jwt");
-        let launchResponse = await sendLaunch();
+        let launchResponse = await sendLaunchWithRetry();
         if (
             authMode === "jwt"
             && apiToken
             && (launchResponse.status === 401 || launchResponse.status === 403)
         ) {
             authMode = await applyLaunchAuth("token");
-            launchResponse = await sendLaunch();
+            launchResponse = await sendLaunchWithRetry();
         }
 
         const launchText = await launchResponse.text();

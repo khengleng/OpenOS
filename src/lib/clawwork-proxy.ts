@@ -24,6 +24,9 @@ const CLAWWORK_JWT_ALGORITHMS = (process.env.CLAWWORK_JWT_ALGORITHMS || "HS256")
 const CLAWWORK_JWT_SIGNING_ALG = CLAWWORK_JWT_ALGORITHMS[0] || "HS256";
 
 type AuthMode = "jwt" | "token" | "none";
+const RETRYABLE_STATUSES = new Set([404, 502, 503, 504]);
+
+const sleep = (ms: number) => new Promise((resolve) => setTimeout(resolve, ms));
 
 async function generateClawworkJwt(tenantId: string): Promise<string> {
     if (!CLAWWORK_JWT_SECRET) return "";
@@ -97,9 +100,18 @@ export async function proxyClawworkRequest(
                 cache: "no-store",
             });
 
+        const sendWithRetry = async (targetHeaders: Headers) => {
+            let response = await send(targetHeaders);
+            if (RETRYABLE_STATUSES.has(response.status)) {
+                await sleep(250);
+                response = await send(targetHeaders);
+            }
+            return response;
+        };
+
         const initialMode: AuthMode = tenantId && CLAWWORK_JWT_SECRET ? "jwt" : "token";
         let authMode = await applyAuthHeaders(headers, initialMode);
-        let upstreamResponse = await send(headers);
+        let upstreamResponse = await sendWithRetry(headers);
 
         const canFallbackToToken =
             authMode === "jwt"
@@ -108,7 +120,7 @@ export async function proxyClawworkRequest(
 
         if (canFallbackToToken) {
             authMode = await applyAuthHeaders(headers, "token");
-            upstreamResponse = await send(headers);
+            upstreamResponse = await sendWithRetry(headers);
         }
 
         const responseBody = await upstreamResponse.text();
