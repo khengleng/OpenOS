@@ -117,6 +117,124 @@ export function AppleHealthSyncCard() {
         setMessage('Sync key copied.')
     }
 
+    function getSyncEndpoint(): string {
+        if (typeof window === 'undefined') return '/api/health/apple/sync'
+        return `${window.location.origin}/api/health/apple/sync`
+    }
+
+    function syncKeyOrPlaceholder(): string {
+        if (syncKey) return syncKey
+        if (data?.connection?.key_last4) return `ahs_your_full_key_ending_${data.connection.key_last4}`
+        return 'ahs_your_sync_key'
+    }
+
+    function sampleBodyText(): string {
+        return JSON.stringify(
+            {
+                metrics: [
+                    {
+                        date: new Date().toISOString().slice(0, 10),
+                        steps: 9234,
+                        active_calories: 540,
+                        resting_heart_rate: 58,
+                        sleep_hours: 7.2,
+                    },
+                ],
+            },
+            null,
+            2,
+        )
+    }
+
+    function copyHeadersTemplate() {
+        const endpoint = getSyncEndpoint()
+        const headersTemplate = [
+            `POST ${endpoint}`,
+            `x-apple-sync-key: ${syncKeyOrPlaceholder()}`,
+            'x-apple-sync-ts: <epoch_ms>',
+            'x-apple-sync-signature: <hmac_sha256_hex_of_<ts>.<raw_json>>',
+            'content-type: application/json',
+        ].join('\n')
+        navigator.clipboard.writeText(headersTemplate)
+            .then(() => setMessage('Header template copied.'))
+            .catch(() => setMessage('Failed to copy headers.'))
+    }
+
+    function copySamplePayload() {
+        navigator.clipboard.writeText(sampleBodyText())
+            .then(() => setMessage('Sample JSON payload copied.'))
+            .catch(() => setMessage('Failed to copy sample payload.'))
+    }
+
+    function copyCurlTemplate() {
+        const endpoint = getSyncEndpoint()
+        const key = syncKeyOrPlaceholder()
+        const curlTemplate = [
+            'TS=$(date +%s%3N)',
+            `KEY="${key}"`,
+            `BODY='${JSON.stringify({ metrics: [{ date: new Date().toISOString().slice(0, 10), steps: 9234 }] })}'`,
+            'SIG=$(printf "%s.%s" "$TS" "$BODY" | openssl dgst -sha256 -hmac "$KEY" -hex | sed \'s/^.* //\')',
+            `curl -X POST "${endpoint}" \\`,
+            '  -H "content-type: application/json" \\',
+            '  -H "x-apple-sync-key: $KEY" \\',
+            '  -H "x-apple-sync-ts: $TS" \\',
+            '  -H "x-apple-sync-signature: $SIG" \\',
+            '  -d "$BODY"',
+        ].join('\n')
+        navigator.clipboard.writeText(curlTemplate)
+            .then(() => setMessage('cURL template copied.'))
+            .catch(() => setMessage('Failed to copy cURL template.'))
+    }
+
+    function downloadShortcutSetup() {
+        const endpoint = getSyncEndpoint()
+        const content = {
+            name: 'OpenOS Apple Health Sync Setup',
+            endpoint,
+            method: 'POST',
+            headers: {
+                'content-type': 'application/json',
+                'x-apple-sync-key': syncKeyOrPlaceholder(),
+                'x-apple-sync-ts': '<epoch_ms>',
+                'x-apple-sync-signature': '<hmac_sha256_hex_of_<ts>.<raw_json>>',
+            },
+            payload_example: JSON.parse(sampleBodyText()),
+            shortcuts_steps: [
+                '1. Create a Text action with your JSON body.',
+                '2. Get current date and convert to epoch milliseconds for x-apple-sync-ts.',
+                '3. Compute HMAC-SHA256 over "<ts>.<raw_json>" using sync key.',
+                '4. Use Get Contents of URL with POST, headers above, and Text body.',
+            ],
+        }
+        const blob = new Blob([JSON.stringify(content, null, 2)], { type: 'application/json' })
+        const url = URL.createObjectURL(blob)
+        const a = document.createElement('a')
+        a.href = url
+        a.download = 'openos-apple-health-shortcut-setup.json'
+        document.body.appendChild(a)
+        a.click()
+        a.remove()
+        URL.revokeObjectURL(url)
+        setMessage('Shortcut setup file downloaded.')
+    }
+
+    function syncDiagnosticHint(err: string): string {
+        const text = err.toLowerCase()
+        if (text.includes('unauthorized') || text.includes('invalid apple health sync key')) {
+            return 'Session or sync key is invalid. Sign in again and rotate a new sync key.'
+        }
+        if (text.includes('missing sync signature headers')) {
+            return 'Signature headers are missing. Send x-apple-sync-ts and x-apple-sync-signature.'
+        }
+        if (text.includes('invalid sync request signature')) {
+            return 'Signature mismatch. Recompute HMAC using "<ts>.<raw_json>" with the exact raw JSON payload.'
+        }
+        if (text.includes('apple health schema missing')) {
+            return 'Database tables are missing. Run the Apple Health Supabase migration.'
+        }
+        return 'Check endpoint, auth session, sync key, timestamp, and signature generation.'
+    }
+
     return (
         <Card>
             <CardHeader className="flex flex-row items-start justify-between">
@@ -176,6 +294,18 @@ export function AppleHealthSyncCard() {
                             <Copy className="mr-2 h-4 w-4" />Copy New Key
                         </Button>
                     ) : null}
+                    <Button variant="outline" onClick={copyHeadersTemplate}>
+                        <Copy className="mr-2 h-4 w-4" />Copy Headers
+                    </Button>
+                    <Button variant="outline" onClick={copySamplePayload}>
+                        <Copy className="mr-2 h-4 w-4" />Copy Sample JSON
+                    </Button>
+                    <Button variant="outline" onClick={copyCurlTemplate}>
+                        <Copy className="mr-2 h-4 w-4" />Copy cURL
+                    </Button>
+                    <Button variant="outline" onClick={downloadShortcutSetup}>
+                        <Smartphone className="mr-2 h-4 w-4" />Download iPhone Setup
+                    </Button>
                 </div>
 
                 {syncKey ? (
@@ -194,7 +324,17 @@ export function AppleHealthSyncCard() {
                     <p>4) Payload supports <code>metrics[]</code> or single metric with <code>date</code>, <code>steps</code>, <code>active_calories</code>, <code>resting_heart_rate</code>, <code>sleep_hours</code>.</p>
                     <p className="flex items-center gap-1"><ShieldCheck className="h-3.5 w-3.5" /> Sync key is hashed server-side and request signatures are verified.</p>
                     <p className="flex items-center gap-1"><Activity className="h-3.5 w-3.5" /> Data is linked to your logged-in account and shown here after sync.</p>
+                    <p>Endpoint: <code>{getSyncEndpoint()}</code></p>
                 </div>
+
+                {(error || message) ? (
+                    <div className="rounded-md border p-3 text-xs space-y-1">
+                        <p className="font-medium">Sync diagnostics</p>
+                        {error ? <p className="text-rose-700">Last error: {String(error.message || 'Unknown error')}</p> : null}
+                        {error ? <p className="text-muted-foreground">Hint: {syncDiagnosticHint(String(error.message || ''))}</p> : null}
+                        {message ? <p className="text-muted-foreground">Last action: {message}</p> : null}
+                    </div>
+                ) : null}
 
                 {message ? <p className="text-xs text-muted-foreground">{message}</p> : null}
             </CardContent>
