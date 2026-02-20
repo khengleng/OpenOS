@@ -7,7 +7,15 @@ import { DEFAULT_WORKSPACE_MODEL } from "@/lib/model-options";
 type TaskStatus = "todo" | "in_progress" | "blocked" | "done";
 type LaunchAuthMode = "jwt" | "token" | "none";
 const RETRYABLE_LAUNCH_STATUSES = new Set([404, 502, 503, 504]);
+const MAX_LAUNCH_ATTEMPTS = 3;
 const sleep = (ms: number) => new Promise((resolve) => setTimeout(resolve, ms));
+
+type LaunchAttempt = {
+    at: string;
+    status: number;
+    duration_ms: number;
+    auth_mode: LaunchAuthMode;
+};
 
 function isMissingCoworkerTableError(error: unknown): boolean {
     const code = typeof error === "object" && error !== null && "code" in error
@@ -170,6 +178,10 @@ export async function POST(
     const userMetadata = (user.user_metadata || {}) as Record<string, unknown>;
     const defaultModel = String(userMetadata.workspace_default_model || DEFAULT_WORKSPACE_MODEL).trim() || DEFAULT_WORKSPACE_MODEL;
     const model = requestedModel || defaultModel;
+    const runConfig = {
+        max_steps: requestedMaxSteps ?? 20,
+        max_retries: requestedMaxRetries ?? 2,
+    };
 
     const config = {
         livebench: {
@@ -208,8 +220,8 @@ export async function POST(
                 },
             ],
             agent_params: {
-                max_steps: requestedMaxSteps ?? 20,
-                max_retries: requestedMaxRetries ?? 2,
+                max_steps: runConfig.max_steps,
+                max_retries: runConfig.max_retries,
                 base_delay: 0.5,
                 tasks_per_day: 1,
             },
@@ -229,7 +241,41 @@ export async function POST(
         );
     }
 
+    const persistFailedLaunch = async (
+        errorMessage: string,
+        attempts: LaunchAttempt[],
+        upstreamStatus: number | null,
+        upstreamPayload: unknown,
+    ) => {
+        const updatedHistory = [
+            ...history,
+            {
+                at: now,
+                action: "simulation_launch_failed",
+                signature,
+                model,
+                run_config: runConfig,
+                error: errorMessage,
+                upstream_status: upstreamStatus,
+                upstream_payload: upstreamPayload,
+                launch_attempts: attempts,
+            },
+        ];
+
+        await supabase
+            .from("coworker_tasks")
+            .update({
+                status: "blocked",
+                updated_at: now,
+                history: updatedHistory,
+                result_summary: `Run failed: ${errorMessage.slice(0, 220)}`,
+            })
+            .eq("id", id)
+            .eq("user_id", user.id);
+    };
+
     let launchPayload: unknown = null;
+    let launchAttempts: LaunchAttempt[] = [];
     try {
         const url = new URL("/api/simulations", clawworkBase);
         const headers = new Headers({ "content-type": "application/json", "x-tenant-id": user.id });
@@ -259,24 +305,36 @@ export async function POST(
                 cache: "no-store",
             });
 
-        const sendLaunchWithRetry = async () => {
-            let response = await sendLaunch();
-            if (RETRYABLE_LAUNCH_STATUSES.has(response.status)) {
-                await sleep(250);
+        const sendLaunchWithRetry = async (authMode: LaunchAuthMode) => {
+            launchAttempts = [];
+            let response: Response | null = null;
+            for (let attempt = 1; attempt <= MAX_LAUNCH_ATTEMPTS; attempt += 1) {
+                const startedAt = Date.now();
                 response = await sendLaunch();
+                launchAttempts.push({
+                    at: new Date().toISOString(),
+                    status: response.status,
+                    duration_ms: Date.now() - startedAt,
+                    auth_mode: authMode,
+                });
+                if (!RETRYABLE_LAUNCH_STATUSES.has(response.status) || attempt === MAX_LAUNCH_ATTEMPTS) {
+                    break;
+                }
+                const delayMs = 250 * 2 ** (attempt - 1);
+                await sleep(delayMs);
             }
-            return response;
+            return response as Response;
         };
 
         let authMode = await applyLaunchAuth("jwt");
-        let launchResponse = await sendLaunchWithRetry();
+        let launchResponse = await sendLaunchWithRetry(authMode);
         if (
             authMode === "jwt"
             && apiToken
             && (launchResponse.status === 401 || launchResponse.status === 403)
         ) {
             authMode = await applyLaunchAuth("token");
-            launchResponse = await sendLaunchWithRetry();
+            launchResponse = await sendLaunchWithRetry(authMode);
         }
 
         const launchText = await launchResponse.text();
@@ -287,6 +345,12 @@ export async function POST(
         }
 
         if ((launchResponse.status === 401 || launchResponse.status === 403) && authMode === "none") {
+            await persistFailedLaunch(
+                "ClawWork auth misconfigured: no JWT secret or API token configured.",
+                launchAttempts,
+                launchResponse.status,
+                launchPayload,
+            );
             return NextResponse.json(
                 {
                     error: "ClawWork auth misconfigured",
@@ -300,6 +364,12 @@ export async function POST(
         if (!launchResponse.ok) {
             const contentType = launchResponse.headers.get("content-type") || "";
             if (launchResponse.status === 404 && contentType.includes("text/html")) {
+                await persistFailedLaunch(
+                    "Received HTML 404 from upstream ClawWork service.",
+                    launchAttempts,
+                    launchResponse.status,
+                    launchPayload,
+                );
                 return NextResponse.json(
                     {
                         error: "ClawWork upstream misconfigured",
@@ -317,10 +387,12 @@ export async function POST(
                     || `Launch failed (${launchResponse.status})`,
                 )
                 : launchText || `Launch failed (${launchResponse.status})`;
+            await persistFailedLaunch(detail, launchAttempts, launchResponse.status, launchPayload);
             return NextResponse.json({ error: detail }, { status: launchResponse.status });
         }
     } catch (error) {
         const message = error instanceof Error ? error.message : "Failed to launch coworker task";
+        await persistFailedLaunch(message, launchAttempts, null, null);
         return NextResponse.json({ error: message }, { status: 502 });
     }
 
@@ -332,9 +404,10 @@ export async function POST(
         signature,
         model,
         run_config: {
-            max_steps: requestedMaxSteps ?? 20,
-            max_retries: requestedMaxRetries ?? 2,
+            max_steps: runConfig.max_steps,
+            max_retries: runConfig.max_retries,
         },
+        launch_attempts: launchAttempts,
         sla: sla,
     });
 

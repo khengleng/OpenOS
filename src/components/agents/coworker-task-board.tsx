@@ -412,6 +412,7 @@ export function CoworkerTaskBoard() {
         if (action === "sla_configured") return "SLA configured";
         if (action === "sla_updated") return "SLA updated";
         if (action === "simulation_started") return "Simulation started";
+        if (action === "simulation_launch_failed") return "Simulation launch failed";
         if (action === "created") return "Task created";
         return action.replaceAll("_", " ");
     }
@@ -1165,6 +1166,27 @@ export function CoworkerTaskBoard() {
                                                     <p className="text-muted-foreground">{when ? new Date(when).toLocaleString() : "Unknown time"}</p>
                                                     {record.simulation_id ? (
                                                         <p className="text-muted-foreground">Simulation: {String(record.simulation_id)}</p>
+                                                    ) : null}
+                                                    {record.error ? (
+                                                        <p className="text-rose-700">Error: {String(record.error)}</p>
+                                                    ) : null}
+                                                    {record.upstream_status ? (
+                                                        <p className="text-muted-foreground">Upstream status: {String(record.upstream_status)}</p>
+                                                    ) : null}
+                                                    {record.run_config && typeof record.run_config === "object" ? (
+                                                        <p className="text-muted-foreground">
+                                                            Run config: steps {String((record.run_config as { max_steps?: unknown }).max_steps || "-")}
+                                                            {" | "}retries {String((record.run_config as { max_retries?: unknown }).max_retries || "-")}
+                                                        </p>
+                                                    ) : null}
+                                                    {Array.isArray(record.launch_attempts) && record.launch_attempts.length > 0 ? (
+                                                        <p className="text-muted-foreground">
+                                                            Launch attempts: {record.launch_attempts.map((attempt) => {
+                                                                if (!attempt || typeof attempt !== "object") return "unknown";
+                                                                const a = attempt as { status?: unknown; duration_ms?: unknown; auth_mode?: unknown };
+                                                                return `${String(a.status || "?")} (${String(a.duration_ms || "?")}ms/${String(a.auth_mode || "?")})`;
+                                                            }).join(", ")}
+                                                        </p>
                                                     ) : null}
                                                     {record.assignee ? (
                                                         <p className="text-muted-foreground">Assignee: {String(record.assignee)}</p>
