@@ -1,10 +1,12 @@
 'use client'
 
 import { useActionState } from 'react'
+import useSWR from 'swr'
 import { Card, CardContent, CardDescription, CardHeader, CardTitle } from '@/components/ui/card'
 import { Input } from '@/components/ui/input'
 import { Label } from '@/components/ui/label'
 import { Button } from '@/components/ui/button'
+import { DEFAULT_WORKSPACE_MODEL, WORKSPACE_MODEL_OPTIONS } from '@/lib/model-options'
 import {
     type SettingsActionState,
     updateAccountSettings,
@@ -18,6 +20,12 @@ type SettingsFormProps = {
     timezone: string
     defaultModel: string
     agentPollingInterval: number
+}
+
+type ModelOption = {
+    value: string
+    label: string
+    provider: string
 }
 
 const INITIAL_STATE: SettingsActionState = {
@@ -45,6 +53,24 @@ export function SettingsForm({
     const [accountState, accountAction, accountPending] = useActionState(updateAccountSettings, INITIAL_STATE)
     const [securityState, securityAction, securityPending] = useActionState(updateSecuritySettings, INITIAL_STATE)
     const [workspaceState, workspaceAction, workspacePending] = useActionState(updateWorkspaceSettings, INITIAL_STATE)
+    const { data: modelData } = useSWR<{ models: ModelOption[] }>(
+        '/api/models/available',
+        async (url: string) => {
+            const res = await fetch(url)
+            if (!res.ok) return { models: [] }
+            return res.json()
+        },
+    )
+    const modelOptions = (modelData?.models && modelData.models.length > 0)
+        ? modelData.models
+        : WORKSPACE_MODEL_OPTIONS
+
+    const openaiModels = modelOptions.filter((model) => model.provider === 'OpenAI')
+    const anthropicModels = modelOptions.filter((model) => model.provider === 'Anthropic')
+    const otherModels = modelOptions.filter((model) => model.provider !== 'OpenAI' && model.provider !== 'Anthropic')
+    const selectedModel = modelOptions.some((model) => model.value === defaultModel)
+        ? defaultModel
+        : DEFAULT_WORKSPACE_MODEL
 
     return (
         <div className="space-y-6">
@@ -114,7 +140,41 @@ export function SettingsForm({
                     <form action={workspaceAction} className="space-y-4 max-w-xl">
                         <div className="space-y-2">
                             <Label htmlFor="default_model">Default agent model</Label>
-                            <Input id="default_model" name="default_model" defaultValue={defaultModel} required />
+                            <select
+                                id="default_model"
+                                name="default_model"
+                                defaultValue={selectedModel}
+                                className="h-10 w-full rounded-md border border-input bg-background px-3 py-2 text-sm"
+                                required
+                            >
+                                {openaiModels.length > 0 ? (
+                                    <optgroup label="OpenAI">
+                                        {openaiModels.map((model) => (
+                                            <option key={model.value} value={model.value}>
+                                                {model.label}
+                                            </option>
+                                        ))}
+                                    </optgroup>
+                                ) : null}
+                                {anthropicModels.length > 0 ? (
+                                    <optgroup label="Anthropic">
+                                        {anthropicModels.map((model) => (
+                                            <option key={model.value} value={model.value}>
+                                                {model.label}
+                                            </option>
+                                        ))}
+                                    </optgroup>
+                                ) : null}
+                                {otherModels.length > 0 ? (
+                                    <optgroup label="Other">
+                                        {otherModels.map((model) => (
+                                            <option key={model.value} value={model.value}>
+                                                {model.label}
+                                            </option>
+                                        ))}
+                                    </optgroup>
+                                ) : null}
+                            </select>
                         </div>
                         <div className="space-y-2">
                             <Label htmlFor="agent_polling_interval">Agent refresh interval (seconds)</Label>

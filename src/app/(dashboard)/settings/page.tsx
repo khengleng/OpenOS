@@ -1,6 +1,7 @@
 import { createClient } from '@/lib/supabase/server'
 import { SettingsForm } from './settings-form'
 import { OnboardingStatus } from './onboarding-status'
+import { DEFAULT_WORKSPACE_MODEL } from '@/lib/model-options'
 
 export default async function SettingsPage() {
     const supabase = await createClient()
@@ -11,7 +12,7 @@ export default async function SettingsPage() {
     const metadata = (user?.user_metadata || {}) as Record<string, unknown>
     const displayName = String(metadata.display_name || metadata.full_name || '').trim()
     const timezone = String(metadata.timezone || 'UTC')
-    const defaultModel = String(metadata.workspace_default_model || 'gpt-4o')
+    const defaultModel = String(metadata.workspace_default_model || DEFAULT_WORKSPACE_MODEL)
     const agentPollingInterval = Number(metadata.workspace_agent_polling_interval || 5)
 
     return (

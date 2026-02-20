@@ -2,6 +2,7 @@ import { NextRequest, NextResponse } from "next/server";
 import { SignJWT } from "jose";
 import { createClient } from "@/lib/supabase/server";
 import { getCurrentUserRole, hasRole } from "@/lib/rbac";
+import { DEFAULT_WORKSPACE_MODEL } from "@/lib/model-options";
 
 type TaskStatus = "todo" | "in_progress" | "blocked" | "done";
 type LaunchAuthMode = "jwt" | "token" | "none";
@@ -121,7 +122,8 @@ export async function POST(
         );
     }
     const prompt = buildInlinePrompt(String(existing.title || "Untitled task"), existing.description);
-    const model = "gpt-4o";
+    const userMetadata = (user.user_metadata || {}) as Record<string, unknown>;
+    const model = String(userMetadata.workspace_default_model || DEFAULT_WORKSPACE_MODEL).trim() || DEFAULT_WORKSPACE_MODEL;
 
     const config = {
         livebench: {

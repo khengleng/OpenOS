@@ -1,6 +1,7 @@
 'use server'
 
 import { createClient } from '@/lib/supabase/server'
+import { DEFAULT_WORKSPACE_MODEL } from '@/lib/model-options'
 
 export type SettingsActionState = {
     error: string
@@ -99,6 +100,9 @@ export async function updateWorkspaceSettings(
     if (!defaultModel) {
         return fail('Default model is required.')
     }
+    if (defaultModel.length > 120) {
+        return fail('Default model is invalid.')
+    }
     if (!Number.isFinite(pollingInterval) || pollingInterval < 2 || pollingInterval > 60) {
         return fail('Agent refresh interval must be between 2 and 60 seconds.')
     }
@@ -117,7 +121,7 @@ export async function updateWorkspaceSettings(
     const { error } = await supabase.auth.updateUser({
         data: {
             ...metadata,
-            workspace_default_model: defaultModel,
+            workspace_default_model: defaultModel || DEFAULT_WORKSPACE_MODEL,
             workspace_agent_polling_interval: pollingInterval,
         },
     })
