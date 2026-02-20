@@ -2,7 +2,6 @@ import { createClient } from '@/lib/supabase/server'
 import { SettingsForm } from './settings-form'
 import { OnboardingStatus } from './onboarding-status'
 import { DEFAULT_WORKSPACE_MODEL } from '@/lib/model-options'
-import { RoleManagement } from './role-management'
 
 export default async function SettingsPage() {
     const supabase = await createClient()
@@ -27,7 +26,6 @@ export default async function SettingsPage() {
                 defaultModel={defaultModel}
                 agentPollingInterval={Number.isFinite(agentPollingInterval) ? agentPollingInterval : 5}
             />
-            <RoleManagement />
         </div>
     )
 }
