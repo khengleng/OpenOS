@@ -94,6 +94,29 @@ code="${res%%|*}"; rest="${res#*|}"; body="${rest%%|*}"
 assert_eq "${code}" "401" "openos unauth /api/coworker/tasks"
 cat "${body}"; echo
 
+res=$(curl_capture "${OPENOS_URL}/api/rbac/me")
+code="${res%%|*}"; rest="${res#*|}"; body="${rest%%|*}"
+assert_eq "${code}" "401" "openos unauth /api/rbac/me"
+cat "${body}"; echo
+
+res=$(curl_capture "${OPENOS_URL}/api/health/apple")
+code="${res%%|*}"; rest="${res#*|}"; body="${rest%%|*}"
+assert_eq "${code}" "401" "openos unauth /api/health/apple"
+cat "${body}"; echo
+
+res=$(curl_capture "${OPENOS_URL}/api/health/apple/sync" "POST")
+code="${res%%|*}"; rest="${res#*|}"; body="${rest%%|*}"
+assert_eq "${code}" "401" "openos unauth POST /api/health/apple/sync"
+cat "${body}"; echo
+
+echo "== OpenOS static assets =="
+res=$(curl_capture "${OPENOS_URL}/manifest.json")
+code="${res%%|*}"; rest="${res#*|}"; body="${rest%%|*}"; headers="${rest#*|}"
+assert_eq "${code}" "200" "openos /manifest.json"
+assert_contains "${headers}" "content-type: application/json" "openos manifest content-type"
+head -c 250 "${body}" || true
+echo
+
 if [[ -n "${CLAWWORK_URL}" ]]; then
   echo "== ClawWork health =="
   res=$(curl_capture "${CLAWWORK_URL}/healthz")
