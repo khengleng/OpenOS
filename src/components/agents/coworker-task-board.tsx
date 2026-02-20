@@ -21,6 +21,7 @@ type TaskTemplate = {
     title: string;
     description: string;
     priority: TaskPriority;
+    requiresApproval: boolean;
 };
 
 type CoworkerTask = {
@@ -38,6 +39,7 @@ type CoworkerTask = {
 
 type AgentRecord = { signature: string };
 type SimulationRecord = { id: string; status?: string; start_time?: string; end_time?: string };
+type ApprovalState = "none" | "pending" | "approved" | "rejected";
 
 const fetcher = async <T,>(url: string): Promise<T> => {
     const res = await fetch(url);
@@ -59,6 +61,13 @@ const priorityClass: Record<TaskPriority, string> = {
     high: "bg-red-100 text-red-700",
 };
 
+const approvalBadgeClass: Record<ApprovalState, string> = {
+    none: "bg-slate-100 text-slate-700",
+    pending: "bg-amber-100 text-amber-800",
+    approved: "bg-green-100 text-green-800",
+    rejected: "bg-rose-100 text-rose-800",
+};
+
 export function CoworkerTaskBoard() {
     const { data, mutate, isLoading, error } = useSWR<{ tasks: CoworkerTask[] }>("/api/coworker/tasks", fetcher, {
         refreshInterval: 8000,
@@ -77,6 +86,8 @@ export function CoworkerTaskBoard() {
     const [assignedAgent, setAssignedAgent] = useState("__unassigned");
     const [selectedTemplateId, setSelectedTemplateId] = useState("__custom");
     const [resultDraft, setResultDraft] = useState<Record<string, string>>({});
+    const [approvalNoteDraft, setApprovalNoteDraft] = useState<Record<string, string>>({});
+    const [approvalAssigneeDraft, setApprovalAssigneeDraft] = useState<Record<string, string>>({});
     const [submitting, setSubmitting] = useState(false);
     const [runningTaskId, setRunningTaskId] = useState<string | null>(null);
     const [message, setMessage] = useState<string>("");
@@ -96,6 +107,11 @@ export function CoworkerTaskBoard() {
         for (const task of tasks) status[task.status] += 1;
         return status;
     }, [tasks]);
+
+    const pendingApprovalTasks = useMemo(
+        () => tasks.filter((task) => latestApprovalState(task) === "pending"),
+        [tasks],
+    );
 
     const templatesById = useMemo(() => {
         const map = new Map<string, TaskTemplate>();
@@ -117,6 +133,10 @@ export function CoworkerTaskBoard() {
                     title,
                     description,
                     priority,
+                    template_id: selectedTemplateId === "__custom" ? null : selectedTemplateId,
+                    requires_approval: selectedTemplateId !== "__custom"
+                        ? Boolean(templatesById.get(selectedTemplateId)?.requiresApproval)
+                        : false,
                     assigned_agent: assignedAgent === "__unassigned" ? null : assignedAgent,
                 }),
             });
@@ -145,6 +165,15 @@ export function CoworkerTaskBoard() {
         const txt = await res.text();
         if (!res.ok) throw new Error(txt || "Update failed");
         await mutate();
+    }
+
+    async function performTaskAction(action: () => Promise<void>) {
+        setMessage("");
+        try {
+            await action();
+        } catch (err) {
+            setMessage(err instanceof Error ? err.message : "Task action failed");
+        }
     }
 
     async function runTask(id: string) {
@@ -182,6 +211,37 @@ export function CoworkerTaskBoard() {
             if (simulationId) return simulationId;
         }
         return null;
+    }
+
+    function latestApprovalState(task: CoworkerTask): ApprovalState {
+        const entries = Array.isArray(task.history) ? [...task.history].reverse() : [];
+        for (const entry of entries) {
+            if (!entry || typeof entry !== "object") continue;
+            const action = "action" in entry ? String((entry as { action?: unknown }).action || "") : "";
+            if (action === "approval_requested") return "pending";
+            if (action === "approval_approved") return "approved";
+            if (action === "approval_rejected") return "rejected";
+        }
+        return "none";
+    }
+
+    function latestPendingApproval(task: CoworkerTask): { assignee: string; note: string } | null {
+        const entries = Array.isArray(task.history) ? task.history : [];
+        let pending: { assignee: string; note: string } | null = null;
+        for (const entry of entries) {
+            if (!entry || typeof entry !== "object") continue;
+            const action = String((entry as { action?: unknown }).action || "");
+            if (action === "approval_requested") {
+                pending = {
+                    assignee: String((entry as { assignee?: unknown }).assignee || ""),
+                    note: String((entry as { note?: unknown }).note || ""),
+                };
+            }
+            if (action === "approval_approved" || action === "approval_rejected") {
+                pending = null;
+            }
+        }
+        return pending;
     }
 
     function applyTemplate(value: string) {
@@ -303,6 +363,70 @@ export function CoworkerTaskBoard() {
 
             <Card>
                 <CardHeader>
+                    <CardTitle>Approval Queue</CardTitle>
+                </CardHeader>
+                <CardContent className="space-y-3">
+                    {pendingApprovalTasks.length === 0 ? (
+                        <p className="text-sm text-muted-foreground">No pending approvals.</p>
+                    ) : (
+                        pendingApprovalTasks.map((task) => (
+                            <div key={`approval-${task.id}`} className="rounded-md border p-3 space-y-2">
+                                <div className="flex items-center justify-between gap-2">
+                                    <p className="font-medium truncate">{task.title}</p>
+                                    <Badge className={approvalBadgeClass.pending}>approval: pending</Badge>
+                                </div>
+                                <p className="text-xs text-muted-foreground">
+                                    Agent: {task.assigned_agent || "Unassigned"} | Updated {new Date(task.updated_at).toLocaleString()}
+                                </p>
+                                <div className="flex gap-2">
+                                    <Input
+                                        value={approvalNoteDraft[task.id] || ""}
+                                        onChange={(e) => setApprovalNoteDraft((prev) => ({ ...prev, [task.id]: e.target.value }))}
+                                        placeholder="Approval note (required for reject)"
+                                    />
+                                    <Input
+                                        value={approvalAssigneeDraft[task.id] || ""}
+                                        onChange={(e) => setApprovalAssigneeDraft((prev) => ({ ...prev, [task.id]: e.target.value }))}
+                                        placeholder="Approver user ID (optional)"
+                                    />
+                                    <Button
+                                        size="sm"
+                                        variant="outline"
+                                        onClick={() => performTaskAction(() => patchTask(task.id, {
+                                            approval_action: "approve",
+                                            approval_note: approvalNoteDraft[task.id] || "",
+                                        }))}
+                                    >
+                                        Approve
+                                    </Button>
+                                    <Button
+                                        size="sm"
+                                        variant="outline"
+                                        onClick={() => performTaskAction(() => patchTask(task.id, {
+                                            approval_action: "reject",
+                                            approval_note: approvalNoteDraft[task.id] || "",
+                                        }))}
+                                    >
+                                        Reject
+                                    </Button>
+                                </div>
+                                {(() => {
+                                    const pending = latestPendingApproval(task);
+                                    if (!pending) return null;
+                                    return (
+                                        <p className="text-xs text-muted-foreground">
+                                            Pending note: {pending.note || "-"} | Assignee: {pending.assignee || "Any approver"}
+                                        </p>
+                                    );
+                                })()}
+                            </div>
+                        ))
+                    )}
+                </CardContent>
+            </Card>
+
+            <Card>
+                <CardHeader>
                     <CardTitle>Task Lifecycle</CardTitle>
                 </CardHeader>
                 <CardContent className="space-y-3">
@@ -317,12 +441,18 @@ export function CoworkerTaskBoard() {
                                 const simId = latestSimulationId(task);
                                 const sim = simId ? simulationsById.get(simId) : null;
                                 const simulationStatus = sim?.status ? String(sim.status) : null;
+                                const approvalState = latestApprovalState(task);
                                 return (
                                     <div className="flex items-center justify-between gap-2">
                                         <p className="font-medium truncate">{task.title}</p>
                                         <div className="flex gap-2">
                                             <Badge variant="outline">{statusLabel[task.status]}</Badge>
                                             <Badge className={priorityClass[task.priority]}>{task.priority}</Badge>
+                                            {approvalState !== "none" ? (
+                                                <Badge className={approvalBadgeClass[approvalState]}>
+                                                    approval: {approvalState}
+                                                </Badge>
+                                            ) : null}
                                             {simulationStatus ? (
                                                 <Badge variant="secondary">{simulationStatus}</Badge>
                                             ) : null}
@@ -365,11 +495,69 @@ export function CoworkerTaskBoard() {
                                 </Button>
                                 <Button
                                     size="sm"
+                                    variant="outline"
+                                    disabled={latestApprovalState(task) === "pending"}
+                                    onClick={() => performTaskAction(() => patchTask(task.id, {
+                                        approval_action: "request",
+                                        approval_note: approvalNoteDraft[task.id] || "",
+                                        approval_assignee: approvalAssigneeDraft[task.id] || "",
+                                    }))}
+                                >
+                                    Request Approval
+                                </Button>
+                                <Button
+                                    size="sm"
+                                    variant="outline"
+                                    disabled={latestApprovalState(task) !== "pending"}
+                                    onClick={() => performTaskAction(() => patchTask(task.id, {
+                                        approval_action: "approve",
+                                        approval_note: approvalNoteDraft[task.id] || "",
+                                    }))}
+                                >
+                                    Approve
+                                </Button>
+                                <Button
+                                    size="sm"
+                                    variant="outline"
+                                    disabled={latestApprovalState(task) !== "pending"}
+                                    onClick={() => performTaskAction(() => patchTask(task.id, {
+                                        approval_action: "reject",
+                                        approval_note: approvalNoteDraft[task.id] || "",
+                                    }))}
+                                >
+                                    Reject
+                                </Button>
+                                <Button
+                                    size="sm"
                                     variant="secondary"
-                                    disabled={runningTaskId === task.id}
+                                    disabled={runningTaskId === task.id || latestApprovalState(task) === "pending"}
                                     onClick={() => runTask(task.id)}
                                 >
                                     {runningTaskId === task.id ? "Launching..." : "Run Task"}
+                                </Button>
+                            </div>
+                            <div className="flex gap-2">
+                                <Input
+                                    value={approvalNoteDraft[task.id] || ""}
+                                    onChange={(e) => setApprovalNoteDraft((prev) => ({ ...prev, [task.id]: e.target.value }))}
+                                    placeholder="Approval note (required for reject)"
+                                />
+                                <Input
+                                    value={approvalAssigneeDraft[task.id] || ""}
+                                    onChange={(e) => setApprovalAssigneeDraft((prev) => ({ ...prev, [task.id]: e.target.value }))}
+                                    placeholder="Approver user ID (optional)"
+                                />
+                                <Button
+                                    size="sm"
+                                    variant="outline"
+                                    disabled={latestApprovalState(task) === "pending"}
+                                    onClick={() => performTaskAction(() => patchTask(task.id, {
+                                        approval_action: "request",
+                                        approval_note: approvalNoteDraft[task.id] || "",
+                                        approval_assignee: approvalAssigneeDraft[task.id] || "",
+                                    }))}
+                                >
+                                    Submit for Approval
                                 </Button>
                             </div>
                             <div className="flex gap-2">

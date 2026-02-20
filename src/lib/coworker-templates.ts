@@ -8,6 +8,7 @@ export type CoworkerTaskTemplate = {
     title: string;
     description: string;
     priority: CoworkerTemplatePriority;
+    requiresApproval: boolean;
 };
 
 export const COWORKER_TASK_TEMPLATES: CoworkerTaskTemplate[] = [
@@ -19,6 +20,7 @@ export const COWORKER_TASK_TEMPLATES: CoworkerTaskTemplate[] = [
         description:
             "Convert raw meeting notes into a concise summary. Include decisions, owners, due dates, and blockers in a structured list.",
         priority: "medium",
+        requiresApproval: false,
     },
     {
         id: "biz-weekly-kpi",
@@ -28,6 +30,7 @@ export const COWORKER_TASK_TEMPLATES: CoworkerTaskTemplate[] = [
         description:
             "Compile this week's key metrics, compare against targets, highlight anomalies, and recommend next actions.",
         priority: "medium",
+        requiresApproval: false,
     },
     {
         id: "biz-followup-emails",
@@ -37,6 +40,7 @@ export const COWORKER_TASK_TEMPLATES: CoworkerTaskTemplate[] = [
         description:
             "Create clear, professional follow-up email drafts for pending client conversations. Include context and proposed next steps.",
         priority: "high",
+        requiresApproval: true,
     },
     {
         id: "biz-invoice-review",
@@ -46,6 +50,7 @@ export const COWORKER_TASK_TEMPLATES: CoworkerTaskTemplate[] = [
         description:
             "Cross-check invoice records against payment logs, flag mismatches, and produce a short reconciliation summary.",
         priority: "high",
+        requiresApproval: true,
     },
     {
         id: "biz-sop-audit",
@@ -55,6 +60,7 @@ export const COWORKER_TASK_TEMPLATES: CoworkerTaskTemplate[] = [
         description:
             "Evaluate current workflow steps against SOP requirements. Identify gaps, risk level, and immediate corrective actions.",
         priority: "medium",
+        requiresApproval: true,
     },
     {
         id: "personal-daily-plan",
@@ -64,6 +70,7 @@ export const COWORKER_TASK_TEMPLATES: CoworkerTaskTemplate[] = [
         description:
             "Create a prioritized daily plan with top 3 outcomes, schedule blocks, and quick wins based on pending tasks.",
         priority: "medium",
+        requiresApproval: false,
     },
     {
         id: "personal-weekly-review",
@@ -73,6 +80,7 @@ export const COWORKER_TASK_TEMPLATES: CoworkerTaskTemplate[] = [
         description:
             "Summarize completed tasks, unfinished items, lessons learned, and next week's focus areas.",
         priority: "low",
+        requiresApproval: false,
     },
     {
         id: "personal-budget-check",
@@ -82,6 +90,7 @@ export const COWORKER_TASK_TEMPLATES: CoworkerTaskTemplate[] = [
         description:
             "Analyze spending against plan, identify over-budget categories, and suggest practical cost adjustments.",
         priority: "high",
+        requiresApproval: true,
     },
     {
         id: "personal-goal-checkin",
@@ -91,6 +100,7 @@ export const COWORKER_TASK_TEMPLATES: CoworkerTaskTemplate[] = [
         description:
             "Evaluate progress against active goals, identify blockers, and generate a short execution plan for the next 7 days.",
         priority: "medium",
+        requiresApproval: false,
     },
     {
         id: "personal-wellness-routine",
@@ -100,6 +110,6 @@ export const COWORKER_TASK_TEMPLATES: CoworkerTaskTemplate[] = [
         description:
             "Create a balanced routine covering exercise, sleep, and recovery with time blocks that fit current schedule constraints.",
         priority: "low",
+        requiresApproval: false,
     },
 ];
-

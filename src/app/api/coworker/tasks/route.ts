@@ -66,6 +66,9 @@ export async function POST(request: NextRequest) {
     const title = String(body.title || "").trim();
     const description = String(body.description || "").trim();
     const assignedAgent = String(body.assigned_agent || "").trim();
+    const templateId = String(body.template_id || "").trim();
+    const requiresApproval = Boolean(body.requires_approval);
+    const approvalAssignee = String(body.approval_assignee || "").trim();
     const statusRaw = String(body.status || "todo").trim();
     const priorityRaw = String(body.priority || "medium").trim();
 
@@ -81,24 +84,45 @@ export async function POST(request: NextRequest) {
     if (!isValidPriority(priorityRaw)) {
         return NextResponse.json({ error: "Invalid priority" }, { status: 400 });
     }
+    if (approvalAssignee.length > 120) {
+        return NextResponse.json({ error: "Approval assignee is too long" }, { status: 400 });
+    }
 
     const now = new Date().toISOString();
-    const historyEntry = {
+    const historyEntry: Record<string, unknown> = {
         at: now,
         action: "created",
         status: statusRaw,
     };
+    if (templateId) {
+        historyEntry.template_id = templateId;
+    }
+
+    const initialStatus: TaskStatus = requiresApproval ? "blocked" : statusRaw;
+    const history = [historyEntry];
+    if (requiresApproval) {
+        history.push({
+            at: now,
+            action: "approval_requested",
+            note: templateId
+                ? `Auto-required by policy for template: ${templateId}`
+                : "Auto-required by policy.",
+            requested_by: user.id,
+            assignee: approvalAssignee || null,
+            policy: "template_requires_approval",
+        });
+    }
 
     const payload = {
         user_id: user.id,
         title,
         description: description || null,
-        status: statusRaw,
+        status: initialStatus,
         priority: priorityRaw,
         assigned_agent: assignedAgent || null,
-        history: [historyEntry],
-        started_at: statusRaw === "in_progress" ? now : null,
-        completed_at: statusRaw === "done" ? now : null,
+        history,
+        started_at: initialStatus === "in_progress" ? now : null,
+        completed_at: initialStatus === "done" ? now : null,
         updated_at: now,
     };
 

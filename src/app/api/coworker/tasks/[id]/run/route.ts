@@ -32,6 +32,18 @@ function parseSimulationId(payload: unknown): string {
     return typeof raw === "string" ? raw : "";
 }
 
+function latestApprovalState(history: unknown[]): "none" | "pending" | "approved" | "rejected" {
+    for (let i = history.length - 1; i >= 0; i -= 1) {
+        const entry = history[i];
+        if (!entry || typeof entry !== "object") continue;
+        const action = "action" in entry ? String((entry as { action?: unknown }).action || "") : "";
+        if (action === "approval_requested") return "pending";
+        if (action === "approval_approved") return "approved";
+        if (action === "approval_rejected") return "rejected";
+    }
+    return "none";
+}
+
 function getRawClawworkBaseUrl(): string {
     return (process.env.CLAWWORK_INTERNAL_URL || process.env.NEXT_PUBLIC_CLAWWORK_API_URL || "").trim();
 }
@@ -95,6 +107,13 @@ export async function POST(
     const now = new Date().toISOString();
     const signature = String(existing.assigned_agent || "").trim() || `task-${id.slice(0, 8)}`;
     const history = Array.isArray(existing.history) ? [...existing.history] : [];
+    const approvalState = latestApprovalState(history);
+    if (approvalState === "pending") {
+        return NextResponse.json(
+            { error: "Task is waiting for approval. Approve or reject it before running." },
+            { status: 409 },
+        );
+    }
     const prompt = buildInlinePrompt(String(existing.title || "Untitled task"), existing.description);
     const model = "gpt-4o";
 

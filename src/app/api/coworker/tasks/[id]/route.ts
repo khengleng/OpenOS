@@ -3,6 +3,40 @@ import { createClient } from "@/lib/supabase/server";
 
 type TaskStatus = "todo" | "in_progress" | "blocked" | "done";
 type TaskPriority = "low" | "medium" | "high";
+type ApprovalAction = "request" | "approve" | "reject";
+
+function isValidApprovalAction(value: string): value is ApprovalAction {
+    return ["request", "approve", "reject"].includes(value);
+}
+
+function latestApprovalState(history: unknown[]): "none" | "pending" | "approved" | "rejected" {
+    for (let i = history.length - 1; i >= 0; i -= 1) {
+        const entry = history[i];
+        if (!entry || typeof entry !== "object") continue;
+        const action = "action" in entry ? String((entry as { action?: unknown }).action || "") : "";
+        if (action === "approval_requested") return "pending";
+        if (action === "approval_approved") return "approved";
+        if (action === "approval_rejected") return "rejected";
+    }
+    return "none";
+}
+
+function latestPendingApprovalRequest(history: unknown[]): Record<string, unknown> | null {
+    let pending: Record<string, unknown> | null = null;
+    for (let i = 0; i < history.length; i += 1) {
+        const entry = history[i];
+        if (!entry || typeof entry !== "object") continue;
+        const normalized = entry as Record<string, unknown>;
+        const action = String(normalized.action || "");
+        if (action === "approval_requested") {
+            pending = normalized;
+        }
+        if (action === "approval_approved" || action === "approval_rejected") {
+            pending = null;
+        }
+    }
+    return pending;
+}
 
 function isValidStatus(value: string): value is TaskStatus {
     return ["todo", "in_progress", "blocked", "done"].includes(value);
@@ -92,6 +126,66 @@ export async function PATCH(
         }
         patch.result_summary = resultSummary || null;
         history.push({ at: now, action: "result_updated" });
+    }
+
+    if (body.approval_action !== undefined) {
+        const actionRaw = String(body.approval_action || "").trim().toLowerCase();
+        if (!isValidApprovalAction(actionRaw)) {
+            return NextResponse.json({ error: "Invalid approval action" }, { status: 400 });
+        }
+        const note = String(body.approval_note || "").trim();
+        if (note.length > 2000) {
+            return NextResponse.json({ error: "Approval note too long" }, { status: 400 });
+        }
+        if (actionRaw === "reject" && !note) {
+            return NextResponse.json({ error: "Rejection reason is required" }, { status: 400 });
+        }
+        const currentState = latestApprovalState(history);
+        if ((actionRaw === "approve" || actionRaw === "reject") && currentState !== "pending") {
+            return NextResponse.json({ error: "No pending approval request for this task" }, { status: 409 });
+        }
+        const assigneeRaw = String(body.approval_assignee || "").trim();
+        if (assigneeRaw.length > 120) {
+            return NextResponse.json({ error: "Approval assignee is too long" }, { status: 400 });
+        }
+        const pendingRequest = latestPendingApprovalRequest(history);
+        const pendingAssignee = pendingRequest ? String(pendingRequest.assignee || "").trim() : "";
+        if ((actionRaw === "approve" || actionRaw === "reject") && pendingAssignee && pendingAssignee !== user.id) {
+            return NextResponse.json(
+                { error: "Only the assigned approver can approve or reject this task" },
+                { status: 403 },
+            );
+        }
+
+        if (actionRaw === "request") {
+            patch.status = "blocked";
+            patch.completed_at = null;
+            history.push({
+                at: now,
+                action: "approval_requested",
+                note: note || null,
+                requested_by: user.id,
+                assignee: assigneeRaw || null,
+            });
+        } else if (actionRaw === "approve") {
+            patch.status = "todo";
+            patch.completed_at = null;
+            history.push({
+                at: now,
+                action: "approval_approved",
+                note: note || null,
+                approved_by: user.id,
+            });
+        } else {
+            patch.status = "blocked";
+            patch.completed_at = null;
+            history.push({
+                at: now,
+                action: "approval_rejected",
+                note: note || null,
+                rejected_by: user.id,
+            });
+        }
     }
 
     patch.history = history;
