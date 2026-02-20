@@ -43,6 +43,8 @@ type ApprovalState = "none" | "pending" | "approved" | "rejected";
 type AppRole = "maker" | "checker" | "admin";
 type ModelOption = { value: string; label: string; provider: string };
 type RunConfigDraft = { model: string; maxSteps: number; maxRetries: number };
+type SlaPolicy = "none" | "warn" | "urgent" | "blocker";
+type TaskSlaState = "none" | "on_track" | "due_soon" | "overdue";
 
 const fetcher = async <T,>(url: string): Promise<T> => {
     const res = await fetch(url);
@@ -85,6 +87,13 @@ const approvalBadgeClass: Record<ApprovalState, string> = {
     rejected: "bg-rose-100 text-rose-800",
 };
 
+const slaBadgeClass: Record<TaskSlaState, string> = {
+    none: "bg-slate-100 text-slate-700",
+    on_track: "bg-emerald-100 text-emerald-800",
+    due_soon: "bg-amber-100 text-amber-800",
+    overdue: "bg-rose-100 text-rose-800",
+};
+
 export function CoworkerTaskBoard() {
     const { data, mutate, isLoading, error } = useSWR<{ tasks: CoworkerTask[] }>("/api/coworker/tasks", fetcher, {
         refreshInterval: 8000,
@@ -102,6 +111,8 @@ export function CoworkerTaskBoard() {
     const [title, setTitle] = useState("");
     const [description, setDescription] = useState("");
     const [priority, setPriority] = useState<TaskPriority>("medium");
+    const [dueAt, setDueAt] = useState("");
+    const [escalationPolicy, setEscalationPolicy] = useState<SlaPolicy>("none");
     const [assignedAgent, setAssignedAgent] = useState("__unassigned");
     const [selectedTemplateId, setSelectedTemplateId] = useState("__custom");
     const [resultDraft, setResultDraft] = useState<Record<string, string>>({});
@@ -112,6 +123,8 @@ export function CoworkerTaskBoard() {
     const [runningTaskId, setRunningTaskId] = useState<string | null>(null);
     const [exportingFormat, setExportingFormat] = useState<"csv" | "json" | null>(null);
     const [runConfigDraft, setRunConfigDraft] = useState<Record<string, RunConfigDraft>>({});
+    const [slaDueDraft, setSlaDueDraft] = useState<Record<string, string>>({});
+    const [slaPolicyDraft, setSlaPolicyDraft] = useState<Record<string, SlaPolicy>>({});
     const [searchQuery, setSearchQuery] = useState("");
     const [statusFilter, setStatusFilter] = useState<"all" | TaskStatus>("all");
     const [priorityFilter, setPriorityFilter] = useState<"all" | TaskPriority>("all");
@@ -155,6 +168,19 @@ export function CoworkerTaskBoard() {
             return statusMatch && priorityMatch && approvalMatch && textMatch;
         });
     }, [tasks, statusFilter, priorityFilter, approvalFilter, searchQuery]);
+
+    const escalationTasks = useMemo(
+        () =>
+            tasks
+                .map((task) => ({ task, slaState: computeSlaState(task), sla: latestSlaConfig(task) }))
+                .filter(({ slaState, task }) => {
+                    if (task.status === "done") return false;
+                    if (slaState === "overdue") return true;
+                    if (slaState === "due_soon") return true;
+                    return false;
+                }),
+        [tasks],
+    );
 
     const templatesById = useMemo(() => {
         const map = new Map<string, TaskTemplate>();
@@ -308,6 +334,40 @@ export function CoworkerTaskBoard() {
             }
         }
         return pending;
+    }
+
+    function latestSlaConfig(task: CoworkerTask): { dueAt: string | null; policy: SlaPolicy } {
+        const entries = Array.isArray(task.history) ? [...task.history].reverse() : [];
+        for (const entry of entries) {
+            if (!entry || typeof entry !== "object") continue;
+            const record = entry as Record<string, unknown>;
+            if (record.sla && typeof record.sla === "object") {
+                const sla = record.sla as Record<string, unknown>;
+                return {
+                    dueAt: sla.due_at ? String(sla.due_at) : null,
+                    policy: (String(sla.escalation_policy || "none").toLowerCase() as SlaPolicy),
+                };
+            }
+            const action = String(record.action || "");
+            if (action === "sla_configured" || action === "sla_updated") {
+                return {
+                    dueAt: record.due_at ? String(record.due_at) : null,
+                    policy: (String(record.escalation_policy || "none").toLowerCase() as SlaPolicy),
+                };
+            }
+        }
+        return { dueAt: null, policy: "none" };
+    }
+
+    function computeSlaState(task: CoworkerTask): TaskSlaState {
+        const sla = latestSlaConfig(task);
+        if (!sla.dueAt) return "none";
+        const due = new Date(sla.dueAt);
+        if (Number.isNaN(due.getTime())) return "none";
+        const msLeft = due.getTime() - Date.now();
+        if (msLeft < 0) return "overdue";
+        if (msLeft <= 24 * 60 * 60 * 1000) return "due_soon";
+        return "on_track";
     }
 
     function applyTemplate(value: string) {

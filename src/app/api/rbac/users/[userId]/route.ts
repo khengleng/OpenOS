@@ -9,6 +9,16 @@ function isAppRole(value: string): value is AppRole {
     return value === "maker" || value === "checker" || value === "admin";
 }
 
+function isMissingUserRolesTableError(error: unknown): boolean {
+    const code = typeof error === "object" && error !== null && "code" in error
+        ? String((error as { code?: unknown }).code || "")
+        : "";
+    const message = typeof error === "object" && error !== null && "message" in error
+        ? String((error as { message?: unknown }).message || "")
+        : "";
+    return code === "42P01" || /user_roles/i.test(message);
+}
+
 export async function PATCH(
     request: NextRequest,
     context: { params: Promise<{ userId: string }> },
@@ -37,9 +47,14 @@ export async function PATCH(
         .single();
 
     if (error) {
+        if (isMissingUserRolesTableError(error)) {
+            return NextResponse.json(
+                { error: "RBAC schema missing. Run Supabase migration for public.user_roles." },
+                { status: 503 },
+            );
+        }
         return NextResponse.json({ error: "Failed to assign role" }, { status: 500 });
     }
 
     return NextResponse.json({ assignment: data });
 }
-

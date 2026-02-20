@@ -8,6 +8,13 @@ import { Label } from '@/components/ui/label'
 import { Button } from '@/components/ui/button'
 
 type AppRole = 'maker' | 'checker' | 'admin'
+type MeResponse = {
+    role: AppRole | null
+    bootstrap_required?: boolean
+    can_manage_roles?: boolean
+    setup_required?: boolean
+    message?: string
+}
 
 type RoleAssignment = {
     user_id: string
@@ -18,12 +25,19 @@ type RoleAssignment = {
 const fetcher = async <T,>(url: string): Promise<T> => {
     const res = await fetch(url)
     const txt = await res.text()
-    if (!res.ok) throw new Error(txt || `HTTP ${res.status}`)
+    if (!res.ok) {
+        try {
+            const payload = JSON.parse(txt) as Record<string, unknown>
+            throw new Error(String(payload.error || payload.detail || txt || `HTTP ${res.status}`))
+        } catch {
+            throw new Error(txt || `HTTP ${res.status}`)
+        }
+    }
     return JSON.parse(txt) as T
 }
 
 export function RoleManagement() {
-    const { data: me, error: meError } = useSWR<{ role: AppRole }>('/api/rbac/me', fetcher)
+    const { data: me, error: meError, mutate: mutateMe } = useSWR<MeResponse>('/api/rbac/me', fetcher)
     const isAdmin = me?.role === 'admin'
     const { data, mutate, isLoading } = useSWR<{ assignments: RoleAssignment[] }>(
         isAdmin ? '/api/rbac/users' : null,
@@ -35,6 +49,7 @@ export function RoleManagement() {
     const [draftRoles, setDraftRoles] = useState<Record<string, AppRole>>({})
     const [message, setMessage] = useState('')
     const [busyUserId, setBusyUserId] = useState<string | null>(null)
+    const [bootstrapping, setBootstrapping] = useState(false)
 
     const assignments = data?.assignments || []
     const sortedAssignments = useMemo(
@@ -62,6 +77,30 @@ export function RoleManagement() {
         }
     }
 
+    async function bootstrapAdminRole() {
+        setBootstrapping(true)
+        setMessage('')
+        try {
+            const res = await fetch('/api/rbac/bootstrap', { method: 'POST' })
+            const txt = await res.text()
+            if (!res.ok) {
+                try {
+                    const payload = JSON.parse(txt) as Record<string, unknown>
+                    throw new Error(String(payload.error || payload.detail || txt || 'Failed to bootstrap admin role'))
+                } catch {
+                    throw new Error(txt || 'Failed to bootstrap admin role')
+                }
+            }
+            await mutateMe()
+            await mutate()
+            setMessage('RBAC initialized. You are now admin.')
+        } catch (err) {
+            setMessage(err instanceof Error ? err.message : 'Failed to bootstrap admin role')
+        } finally {
+            setBootstrapping(false)
+        }
+    }
+
     if (meError) {
         return (
             <Card>
@@ -71,6 +110,45 @@ export function RoleManagement() {
                 </CardHeader>
                 <CardContent>
                     <p className="text-sm text-muted-foreground">Unable to load role information.</p>
+                </CardContent>
+            </Card>
+        )
+    }
+
+    if (me?.setup_required) {
+        return (
+            <Card>
+                <CardHeader>
+                    <CardTitle>Role Management</CardTitle>
+                    <CardDescription>Maker-checker-admin role assignments for this workspace.</CardDescription>
+                </CardHeader>
+                <CardContent className="space-y-3">
+                    <p className="text-sm text-muted-foreground">
+                        {me.message || 'RBAC schema is missing in this deployment.'}
+                    </p>
+                    <p className="text-xs text-muted-foreground">
+                        Run the latest Supabase migrations, then refresh this page.
+                    </p>
+                </CardContent>
+            </Card>
+        )
+    }
+
+    if (me?.bootstrap_required) {
+        return (
+            <Card>
+                <CardHeader>
+                    <CardTitle>Role Management</CardTitle>
+                    <CardDescription>Maker-checker-admin role assignments for this workspace.</CardDescription>
+                </CardHeader>
+                <CardContent className="space-y-3">
+                    <p className="text-sm text-muted-foreground">
+                        RBAC is not initialized yet. Claim the first admin role for this workspace.
+                    </p>
+                    <Button onClick={bootstrapAdminRole} disabled={bootstrapping}>
+                        {bootstrapping ? 'Initializing...' : 'Claim Admin Role'}
+                    </Button>
+                    {message ? <p className="text-xs text-muted-foreground">{message}</p> : null}
                 </CardContent>
             </Card>
         )
@@ -177,4 +255,3 @@ export function RoleManagement() {
         </Card>
     )
 }
-

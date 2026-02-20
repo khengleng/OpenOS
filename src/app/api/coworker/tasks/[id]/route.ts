@@ -5,6 +5,7 @@ import { getCurrentUserRole, hasRole } from "@/lib/rbac";
 type TaskStatus = "todo" | "in_progress" | "blocked" | "done";
 type TaskPriority = "low" | "medium" | "high";
 type ApprovalAction = "request" | "approve" | "reject";
+type EscalationPolicy = "none" | "warn" | "urgent" | "blocker";
 
 function isValidApprovalAction(value: string): value is ApprovalAction {
     return ["request", "approve", "reject"].includes(value);
@@ -45,6 +46,10 @@ function isValidStatus(value: string): value is TaskStatus {
 
 function isValidPriority(value: string): value is TaskPriority {
     return ["low", "medium", "high"].includes(value);
+}
+
+function isValidEscalationPolicy(value: string): value is EscalationPolicy {
+    return ["none", "warn", "urgent", "blocker"].includes(value);
 }
 
 function isMissingCoworkerTableError(error: unknown): boolean {
@@ -147,6 +152,28 @@ export async function PATCH(
         }
         patch.result_summary = resultSummary || null;
         history.push({ at: now, action: "result_updated" });
+    }
+
+    if (body.due_at !== undefined || body.escalation_policy !== undefined) {
+        if (!hasRole(role, ["maker", "admin"])) {
+            return NextResponse.json({ error: "Only maker or admin can update SLA settings" }, { status: 403 });
+        }
+        const dueAtRaw = String(body.due_at || "").trim();
+        const dueAt = dueAtRaw ? new Date(dueAtRaw) : null;
+        if (dueAt && Number.isNaN(dueAt.getTime())) {
+            return NextResponse.json({ error: "Invalid due_at timestamp" }, { status: 400 });
+        }
+        const escalationPolicyRaw = String(body.escalation_policy || "none").trim().toLowerCase();
+        if (!isValidEscalationPolicy(escalationPolicyRaw)) {
+            return NextResponse.json({ error: "Invalid escalation policy" }, { status: 400 });
+        }
+        history.push({
+            at: now,
+            action: "sla_updated",
+            due_at: dueAt ? dueAt.toISOString() : null,
+            escalation_policy: escalationPolicyRaw,
+            updated_by: user.id,
+        });
     }
 
     if (body.approval_action !== undefined) {

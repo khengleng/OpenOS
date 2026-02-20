@@ -46,6 +46,30 @@ function latestApprovalState(history: unknown[]): "none" | "pending" | "approved
     return "none";
 }
 
+function latestSlaConfig(history: unknown[]): { dueAt: string | null; escalationPolicy: string } {
+    for (let i = history.length - 1; i >= 0; i -= 1) {
+        const entry = history[i];
+        if (!entry || typeof entry !== "object") continue;
+        const record = entry as Record<string, unknown>;
+        const action = String(record.action || "");
+        const slaValue = record.sla;
+        if (slaValue && typeof slaValue === "object") {
+            const sla = slaValue as Record<string, unknown>;
+            return {
+                dueAt: sla.due_at ? String(sla.due_at) : null,
+                escalationPolicy: String(sla.escalation_policy || "none"),
+            };
+        }
+        if (action === "sla_configured" || action === "sla_updated") {
+            return {
+                dueAt: record.due_at ? String(record.due_at) : null,
+                escalationPolicy: String(record.escalation_policy || "none"),
+            };
+        }
+    }
+    return { dueAt: null, escalationPolicy: "none" };
+}
+
 function getRawClawworkBaseUrl(): string {
     return (process.env.CLAWWORK_INTERNAL_URL || process.env.NEXT_PUBLIC_CLAWWORK_API_URL || "").trim();
 }
@@ -131,6 +155,16 @@ export async function POST(
             { error: "Task is waiting for approval. Approve or reject it before running." },
             { status: 409 },
         );
+    }
+    const sla = latestSlaConfig(history);
+    if (sla.dueAt && sla.escalationPolicy === "blocker") {
+        const dueDate = new Date(sla.dueAt);
+        if (!Number.isNaN(dueDate.getTime()) && dueDate.getTime() < Date.now()) {
+            return NextResponse.json(
+                { error: "Task is past deadline and blocked by SLA policy. Update deadline or policy before running." },
+                { status: 409 },
+            );
+        }
     }
     const prompt = buildInlinePrompt(String(existing.title || "Untitled task"), existing.description);
     const userMetadata = (user.user_metadata || {}) as Record<string, unknown>;
@@ -301,6 +335,7 @@ export async function POST(
             max_steps: requestedMaxSteps ?? 20,
             max_retries: requestedMaxRetries ?? 2,
         },
+        sla: sla,
     });
 
     const patch: {

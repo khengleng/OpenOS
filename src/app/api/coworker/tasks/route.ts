@@ -4,6 +4,7 @@ import { getCurrentUserRole, hasRole } from "@/lib/rbac";
 
 type TaskStatus = "todo" | "in_progress" | "blocked" | "done";
 type TaskPriority = "low" | "medium" | "high";
+type EscalationPolicy = "none" | "warn" | "urgent" | "blocker";
 
 function isValidStatus(value: string): value is TaskStatus {
     return ["todo", "in_progress", "blocked", "done"].includes(value);
@@ -11,6 +12,10 @@ function isValidStatus(value: string): value is TaskStatus {
 
 function isValidPriority(value: string): value is TaskPriority {
     return ["low", "medium", "high"].includes(value);
+}
+
+function isValidEscalationPolicy(value: string): value is EscalationPolicy {
+    return ["none", "warn", "urgent", "blocker"].includes(value);
 }
 
 function isMissingCoworkerTableError(error: unknown): boolean {
@@ -88,6 +93,9 @@ export async function POST(request: NextRequest) {
     const approvalAssignee = String(body.approval_assignee || "").trim();
     const statusRaw = String(body.status || "todo").trim();
     const priorityRaw = String(body.priority || "medium").trim();
+    const dueAtRaw = String(body.due_at || "").trim();
+    const escalationPolicyRaw = String(body.escalation_policy || "none").trim().toLowerCase();
+    const dueAt = dueAtRaw ? new Date(dueAtRaw) : null;
 
     if (!title || title.length > 180) {
         return NextResponse.json({ error: "Invalid title" }, { status: 400 });
@@ -104,12 +112,22 @@ export async function POST(request: NextRequest) {
     if (approvalAssignee.length > 120) {
         return NextResponse.json({ error: "Approval assignee is too long" }, { status: 400 });
     }
+    if (dueAt && Number.isNaN(dueAt.getTime())) {
+        return NextResponse.json({ error: "Invalid due_at timestamp" }, { status: 400 });
+    }
+    if (!isValidEscalationPolicy(escalationPolicyRaw)) {
+        return NextResponse.json({ error: "Invalid escalation policy" }, { status: 400 });
+    }
 
     const now = new Date().toISOString();
     const historyEntry: Record<string, unknown> = {
         at: now,
         action: "created",
         status: statusRaw,
+        sla: {
+            due_at: dueAt ? dueAt.toISOString() : null,
+            escalation_policy: escalationPolicyRaw,
+        },
     };
     if (templateId) {
         historyEntry.template_id = templateId;
@@ -127,6 +145,16 @@ export async function POST(request: NextRequest) {
             requested_by: user.id,
             assignee: approvalAssignee || null,
             policy: "template_requires_approval",
+        });
+    }
+
+    if (dueAt || escalationPolicyRaw !== "none") {
+        history.push({
+            at: now,
+            action: "sla_configured",
+            due_at: dueAt ? dueAt.toISOString() : null,
+            escalation_policy: escalationPolicyRaw,
+            configured_by: user.id,
         });
     }
 
