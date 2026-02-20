@@ -94,6 +94,26 @@ const slaBadgeClass: Record<TaskSlaState, string> = {
     overdue: "bg-rose-100 text-rose-800",
 };
 
+const slaStateLabel: Record<TaskSlaState, string> = {
+    none: "No SLA",
+    on_track: "On Track",
+    due_soon: "Due Soon",
+    overdue: "Overdue",
+};
+
+function toLocalDateTimeValue(iso: string | null): string {
+    if (!iso) return "";
+    const date = new Date(iso);
+    if (Number.isNaN(date.getTime())) return "";
+    const offset = date.getTimezoneOffset();
+    const local = new Date(date.getTime() - offset * 60_000);
+    return local.toISOString().slice(0, 16);
+}
+
+function dateTimeAfter(days: number): string {
+    return toLocalDateTimeValue(new Date(Date.now() + days * 24 * 60 * 60 * 1000).toISOString());
+}
+
 export function CoworkerTaskBoard() {
     const { data, mutate, isLoading, error } = useSWR<{ tasks: CoworkerTask[] }>("/api/coworker/tasks", fetcher, {
         refreshInterval: 8000,
@@ -211,6 +231,8 @@ export function CoworkerTaskBoard() {
                         ? Boolean(templatesById.get(selectedTemplateId)?.requiresApproval)
                         : false,
                     assigned_agent: assignedAgent === "__unassigned" ? null : assignedAgent,
+                    due_at: dueAt ? new Date(dueAt).toISOString() : null,
+                    escalation_policy: escalationPolicy,
                 }),
             });
             const txt = await res.text();
@@ -222,6 +244,8 @@ export function CoworkerTaskBoard() {
             setPriority("medium");
             setAssignedAgent("__unassigned");
             setSelectedTemplateId("__custom");
+            setDueAt("");
+            setEscalationPolicy("none");
             await mutate();
 
             if (runImmediately && created.task?.id) {
@@ -385,9 +409,37 @@ export function CoworkerTaskBoard() {
         if (action === "approval_requested") return "Approval requested";
         if (action === "approval_approved") return "Approval approved";
         if (action === "approval_rejected") return "Approval rejected";
+        if (action === "sla_configured") return "SLA configured";
+        if (action === "sla_updated") return "SLA updated";
         if (action === "simulation_started") return "Simulation started";
         if (action === "created") return "Task created";
         return action.replaceAll("_", " ");
+    }
+
+    function getSlaDraft(task: CoworkerTask): { dueAt: string; policy: SlaPolicy } {
+        const baseline = latestSlaConfig(task);
+        return {
+            dueAt: slaDueDraft[task.id] ?? toLocalDateTimeValue(baseline.dueAt),
+            policy: slaPolicyDraft[task.id] ?? baseline.policy,
+        };
+    }
+
+    function setTaskSlaDraft(taskId: string, draft: { dueAt?: string; policy?: SlaPolicy }) {
+        if (draft.dueAt !== undefined) {
+            setSlaDueDraft((prev) => ({ ...prev, [taskId]: draft.dueAt || "" }));
+        }
+        if (draft.policy !== undefined) {
+            setSlaPolicyDraft((prev) => ({ ...prev, [taskId]: draft.policy || "none" }));
+        }
+    }
+
+    async function saveTaskSla(task: CoworkerTask) {
+        const draft = getSlaDraft(task);
+        const dueAtIso = draft.dueAt ? new Date(draft.dueAt).toISOString() : null;
+        await patchTask(task.id, {
+            due_at: dueAtIso,
+            escalation_policy: draft.policy,
+        });
     }
 
     async function exportTasks(format: "csv" | "json") {
@@ -543,6 +595,66 @@ export function CoworkerTaskBoard() {
                                 </SelectContent>
                             </Select>
                         </div>
+                        <div className="space-y-2">
+                            <Label htmlFor="task-due-at">Due Date & Time (optional)</Label>
+                            <Input
+                                id="task-due-at"
+                                type="datetime-local"
+                                value={dueAt}
+                                onChange={(e) => setDueAt(e.target.value)}
+                            />
+                        </div>
+                        <div className="space-y-2">
+                            <Label>SLA Escalation Policy</Label>
+                            <Select value={escalationPolicy} onValueChange={(value) => setEscalationPolicy(value as SlaPolicy)}>
+                                <SelectTrigger>
+                                    <SelectValue />
+                                </SelectTrigger>
+                                <SelectContent>
+                                    <SelectItem value="none">None</SelectItem>
+                                    <SelectItem value="warn">Warn</SelectItem>
+                                    <SelectItem value="urgent">Urgent</SelectItem>
+                                    <SelectItem value="blocker">Blocker</SelectItem>
+                                </SelectContent>
+                            </Select>
+                        </div>
+                        <div className="flex gap-2">
+                            <Button
+                                type="button"
+                                size="sm"
+                                variant="outline"
+                                onClick={() => setDueAt(dateTimeAfter(1))}
+                            >
+                                +24h
+                            </Button>
+                            <Button
+                                type="button"
+                                size="sm"
+                                variant="outline"
+                                onClick={() => setDueAt(dateTimeAfter(3))}
+                            >
+                                +3d
+                            </Button>
+                            <Button
+                                type="button"
+                                size="sm"
+                                variant="outline"
+                                onClick={() => setDueAt(dateTimeAfter(7))}
+                            >
+                                +7d
+                            </Button>
+                            <Button
+                                type="button"
+                                size="sm"
+                                variant="outline"
+                                onClick={() => {
+                                    setDueAt("");
+                                    setEscalationPolicy("none");
+                                }}
+                            >
+                                Clear SLA
+                            </Button>
+                        </div>
                         <div className="grid gap-2 sm:grid-cols-2">
                             <Button
                                 onClick={() => createTask(false)}
@@ -656,6 +768,32 @@ export function CoworkerTaskBoard() {
 
             <Card>
                 <CardHeader>
+                    <CardTitle>Escalation Watchlist</CardTitle>
+                </CardHeader>
+                <CardContent className="space-y-3">
+                    {escalationTasks.length === 0 ? (
+                        <p className="text-sm text-muted-foreground">No tasks are near or past SLA right now.</p>
+                    ) : (
+                        escalationTasks.map(({ task, slaState, sla }) => (
+                            <div key={`escalation-${task.id}`} className="rounded-md border p-3 space-y-1">
+                                <div className="flex items-center justify-between gap-2">
+                                    <p className="font-medium truncate">{task.title}</p>
+                                    <div className="flex items-center gap-2">
+                                        <Badge className={slaBadgeClass[slaState]}>{slaStateLabel[slaState]}</Badge>
+                                        <Badge variant="outline">policy: {sla.policy}</Badge>
+                                    </div>
+                                </div>
+                                <p className="text-xs text-muted-foreground">
+                                    Due: {sla.dueAt ? new Date(sla.dueAt).toLocaleString() : "Not set"} | Agent: {task.assigned_agent || "Unassigned"}
+                                </p>
+                            </div>
+                        ))
+                    )}
+                </CardContent>
+            </Card>
+
+            <Card>
+                <CardHeader>
                     <div className="flex flex-col gap-3">
                         <CardTitle>Task Lifecycle</CardTitle>
                         <div className="grid gap-2 md:grid-cols-4">
@@ -729,12 +867,18 @@ export function CoworkerTaskBoard() {
                                 const sim = simId ? simulationsById.get(simId) : null;
                                 const simulationStatus = sim?.status ? String(sim.status) : null;
                                 const approvalState = latestApprovalState(task);
+                                const slaState = computeSlaState(task);
+                                const sla = latestSlaConfig(task);
                                 return (
                                     <div className="flex items-center justify-between gap-2">
                                         <p className="font-medium truncate">{task.title}</p>
                                         <div className="flex gap-2">
                                             <Badge variant="outline">{statusLabel[task.status]}</Badge>
                                             <Badge className={priorityClass[task.priority]}>{task.priority}</Badge>
+                                            <Badge className={slaBadgeClass[slaState]}>
+                                                {slaStateLabel[slaState]}
+                                            </Badge>
+                                            {sla.policy !== "none" ? <Badge variant="outline">policy: {sla.policy}</Badge> : null}
                                             {approvalState !== "none" ? (
                                                 <Badge className={approvalBadgeClass[approvalState]}>
                                                     approval: {approvalState}
@@ -751,6 +895,15 @@ export function CoworkerTaskBoard() {
                             <p className="text-xs text-muted-foreground">
                                 Agent: {task.assigned_agent || "Unassigned"} | Updated {new Date(task.updated_at).toLocaleString()}
                             </p>
+                            {(() => {
+                                const sla = latestSlaConfig(task);
+                                if (!sla.dueAt) return null;
+                                return (
+                                    <p className="text-xs text-muted-foreground">
+                                        SLA due: {new Date(sla.dueAt).toLocaleString()}
+                                    </p>
+                                );
+                            })()}
                             {(() => {
                                 const simId = latestSimulationId(task);
                                 if (!simId) return null;
@@ -827,6 +980,57 @@ export function CoworkerTaskBoard() {
                                                 },
                                             }))}
                                     />
+                                </div>
+                            </div>
+                            <div className="grid gap-2 md:grid-cols-3">
+                                <div className="space-y-1">
+                                    <Label className="text-xs">SLA due date</Label>
+                                    <Input
+                                        type="datetime-local"
+                                        value={getSlaDraft(task).dueAt}
+                                        onChange={(e) => setTaskSlaDraft(task.id, { dueAt: e.target.value })}
+                                    />
+                                </div>
+                                <div className="space-y-1">
+                                    <Label className="text-xs">SLA policy</Label>
+                                    <Select
+                                        value={getSlaDraft(task).policy}
+                                        onValueChange={(value) => setTaskSlaDraft(task.id, { policy: value as SlaPolicy })}
+                                    >
+                                        <SelectTrigger>
+                                            <SelectValue />
+                                        </SelectTrigger>
+                                        <SelectContent>
+                                            <SelectItem value="none">None</SelectItem>
+                                            <SelectItem value="warn">Warn</SelectItem>
+                                            <SelectItem value="urgent">Urgent</SelectItem>
+                                            <SelectItem value="blocker">Blocker</SelectItem>
+                                        </SelectContent>
+                                    </Select>
+                                </div>
+                                <div className="flex items-end gap-2">
+                                    <Button
+                                        size="sm"
+                                        variant="outline"
+                                        disabled={!(role === "maker" || role === "admin")}
+                                        onClick={() => performTaskAction(() => saveTaskSla(task))}
+                                    >
+                                        Save SLA
+                                    </Button>
+                                    <Button
+                                        size="sm"
+                                        variant="outline"
+                                        disabled={!(role === "maker" || role === "admin")}
+                                        onClick={() => {
+                                            setTaskSlaDraft(task.id, { dueAt: "", policy: "none" });
+                                            void performTaskAction(() => patchTask(task.id, {
+                                                due_at: null,
+                                                escalation_policy: "none",
+                                            }));
+                                        }}
+                                    >
+                                        Clear
+                                    </Button>
                                 </div>
                             </div>
                             <div className="flex flex-wrap gap-2">
