@@ -1,5 +1,6 @@
 import { NextRequest, NextResponse } from "next/server";
 import { createClient } from "@/lib/supabase/server";
+import { getCurrentUserRole, hasRole } from "@/lib/rbac";
 
 type TaskStatus = "todo" | "in_progress" | "blocked" | "done";
 type TaskPriority = "low" | "medium" | "high";
@@ -32,6 +33,14 @@ export async function GET() {
         return NextResponse.json({ error: "Unauthorized" }, { status: 401 });
     }
 
+    const role = await getCurrentUserRole(user.id);
+    if (!role) {
+        return NextResponse.json(
+            { error: "RBAC role not configured. Assign maker/checker/admin in public.user_roles." },
+            { status: 403 },
+        );
+    }
+
     const { data, error } = await supabase
         .from("coworker_tasks")
         .select("*")
@@ -60,6 +69,14 @@ export async function POST(request: NextRequest) {
 
     if (!user) {
         return NextResponse.json({ error: "Unauthorized" }, { status: 401 });
+    }
+
+    const role = await getCurrentUserRole(user.id);
+    if (!hasRole(role, ["maker", "admin"])) {
+        return NextResponse.json(
+            { error: "Only maker or admin can create coworker tasks" },
+            { status: 403 },
+        );
     }
 
     const body = (await request.json().catch(() => ({}))) as Record<string, unknown>;

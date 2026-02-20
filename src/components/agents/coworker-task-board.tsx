@@ -40,6 +40,7 @@ type CoworkerTask = {
 type AgentRecord = { signature: string };
 type SimulationRecord = { id: string; status?: string; start_time?: string; end_time?: string };
 type ApprovalState = "none" | "pending" | "approved" | "rejected";
+type AppRole = "maker" | "checker" | "admin";
 
 const fetcher = async <T,>(url: string): Promise<T> => {
     const res = await fetch(url);
@@ -79,6 +80,7 @@ export function CoworkerTaskBoard() {
         refreshInterval: 6000,
     });
     const { data: templatesData } = useSWR<{ templates: TaskTemplate[] }>("/api/coworker/templates", fetcher);
+    const { data: roleData } = useSWR<{ role: AppRole }>("/api/rbac/me", fetcher);
 
     const [title, setTitle] = useState("");
     const [description, setDescription] = useState("");
@@ -94,6 +96,7 @@ export function CoworkerTaskBoard() {
 
     const tasks = data?.tasks || [];
     const templates = templatesData?.templates || [];
+    const role = roleData?.role || null;
     const agentOptions = useMemo(
         () =>
             Array.from(
@@ -344,11 +347,12 @@ export function CoworkerTaskBoard() {
                         </div>
                         <Button
                             onClick={createTask}
-                            disabled={submitting || !title.trim()}
+                            disabled={submitting || !title.trim() || !(role === "maker" || role === "admin")}
                             className="w-full"
                         >
                             {submitting ? "Creating..." : "Create Coworker Task"}
                         </Button>
+                        {role ? <p className="text-xs text-muted-foreground">Your role: {role}</p> : null}
                         {message ? <p className="text-xs text-muted-foreground">{message}</p> : null}
                     </div>
                 </CardContent>
@@ -392,6 +396,7 @@ export function CoworkerTaskBoard() {
                                     <Button
                                         size="sm"
                                         variant="outline"
+                                        disabled={!(role === "checker" || role === "admin")}
                                         onClick={() => performTaskAction(() => patchTask(task.id, {
                                             approval_action: "approve",
                                             approval_note: approvalNoteDraft[task.id] || "",
@@ -402,6 +407,7 @@ export function CoworkerTaskBoard() {
                                     <Button
                                         size="sm"
                                         variant="outline"
+                                        disabled={!(role === "checker" || role === "admin")}
                                         onClick={() => performTaskAction(() => patchTask(task.id, {
                                             approval_action: "reject",
                                             approval_note: approvalNoteDraft[task.id] || "",
@@ -481,22 +487,41 @@ export function CoworkerTaskBoard() {
                                 </p>
                             ) : null}
                             <div className="flex flex-wrap gap-2">
-                                <Button size="sm" variant="outline" onClick={() => patchTask(task.id, { status: "in_progress" })}>
+                                <Button
+                                    size="sm"
+                                    variant="outline"
+                                    disabled={!(role === "maker" || role === "admin")}
+                                    onClick={() => patchTask(task.id, { status: "in_progress" })}
+                                >
                                     Start
                                 </Button>
-                                <Button size="sm" variant="outline" onClick={() => patchTask(task.id, { status: "blocked" })}>
+                                <Button
+                                    size="sm"
+                                    variant="outline"
+                                    disabled={!(role === "maker" || role === "admin")}
+                                    onClick={() => patchTask(task.id, { status: "blocked" })}
+                                >
                                     Block
                                 </Button>
-                                <Button size="sm" variant="outline" onClick={() => patchTask(task.id, { status: "todo" })}>
+                                <Button
+                                    size="sm"
+                                    variant="outline"
+                                    disabled={!(role === "maker" || role === "admin")}
+                                    onClick={() => patchTask(task.id, { status: "todo" })}
+                                >
                                     Reopen
                                 </Button>
-                                <Button size="sm" onClick={() => patchTask(task.id, { status: "done" })}>
+                                <Button
+                                    size="sm"
+                                    disabled={!(role === "maker" || role === "admin")}
+                                    onClick={() => patchTask(task.id, { status: "done" })}
+                                >
                                     Complete
                                 </Button>
                                 <Button
                                     size="sm"
                                     variant="outline"
-                                    disabled={latestApprovalState(task) === "pending"}
+                                    disabled={latestApprovalState(task) === "pending" || !(role === "maker" || role === "admin")}
                                     onClick={() => performTaskAction(() => patchTask(task.id, {
                                         approval_action: "request",
                                         approval_note: approvalNoteDraft[task.id] || "",
@@ -508,7 +533,7 @@ export function CoworkerTaskBoard() {
                                 <Button
                                     size="sm"
                                     variant="outline"
-                                    disabled={latestApprovalState(task) !== "pending"}
+                                    disabled={latestApprovalState(task) !== "pending" || !(role === "checker" || role === "admin")}
                                     onClick={() => performTaskAction(() => patchTask(task.id, {
                                         approval_action: "approve",
                                         approval_note: approvalNoteDraft[task.id] || "",
@@ -519,7 +544,7 @@ export function CoworkerTaskBoard() {
                                 <Button
                                     size="sm"
                                     variant="outline"
-                                    disabled={latestApprovalState(task) !== "pending"}
+                                    disabled={latestApprovalState(task) !== "pending" || !(role === "checker" || role === "admin")}
                                     onClick={() => performTaskAction(() => patchTask(task.id, {
                                         approval_action: "reject",
                                         approval_note: approvalNoteDraft[task.id] || "",
@@ -530,7 +555,11 @@ export function CoworkerTaskBoard() {
                                 <Button
                                     size="sm"
                                     variant="secondary"
-                                    disabled={runningTaskId === task.id || latestApprovalState(task) === "pending"}
+                                    disabled={
+                                        runningTaskId === task.id
+                                        || latestApprovalState(task) === "pending"
+                                        || !(role === "maker" || role === "admin")
+                                    }
                                     onClick={() => runTask(task.id)}
                                 >
                                     {runningTaskId === task.id ? "Launching..." : "Run Task"}
@@ -550,7 +579,7 @@ export function CoworkerTaskBoard() {
                                 <Button
                                     size="sm"
                                     variant="outline"
-                                    disabled={latestApprovalState(task) === "pending"}
+                                    disabled={latestApprovalState(task) === "pending" || !(role === "maker" || role === "admin")}
                                     onClick={() => performTaskAction(() => patchTask(task.id, {
                                         approval_action: "request",
                                         approval_note: approvalNoteDraft[task.id] || "",
@@ -569,6 +598,7 @@ export function CoworkerTaskBoard() {
                                 <Button
                                     size="sm"
                                     variant="secondary"
+                                    disabled={!(role === "maker" || role === "admin")}
                                     onClick={() => patchTask(task.id, { result_summary: resultDraft[task.id] || "" })}
                                 >
                                     Save Result

@@ -1,5 +1,6 @@
 import { NextRequest, NextResponse } from "next/server";
 import { createClient } from "@/lib/supabase/server";
+import { getCurrentUserRole, hasRole } from "@/lib/rbac";
 
 type TaskStatus = "todo" | "in_progress" | "blocked" | "done";
 type TaskPriority = "low" | "medium" | "high";
@@ -70,6 +71,14 @@ export async function PATCH(
         return NextResponse.json({ error: "Unauthorized" }, { status: 401 });
     }
 
+    const role = await getCurrentUserRole(user.id);
+    if (!role) {
+        return NextResponse.json(
+            { error: "RBAC role not configured. Assign maker/checker/admin in public.user_roles." },
+            { status: 403 },
+        );
+    }
+
     const { data: existing, error: existingError } = await supabase
         .from("coworker_tasks")
         .select("*")
@@ -93,6 +102,9 @@ export async function PATCH(
     const now = new Date().toISOString();
 
     if (body.status !== undefined) {
+        if (!hasRole(role, ["maker", "admin"])) {
+            return NextResponse.json({ error: "Only maker or admin can update task status" }, { status: 403 });
+        }
         const statusRaw = String(body.status || "").trim();
         if (!isValidStatus(statusRaw)) {
             return NextResponse.json({ error: "Invalid status" }, { status: 400 });
@@ -105,6 +117,9 @@ export async function PATCH(
     }
 
     if (body.priority !== undefined) {
+        if (!hasRole(role, ["maker", "admin"])) {
+            return NextResponse.json({ error: "Only maker or admin can update task priority" }, { status: 403 });
+        }
         const priorityRaw = String(body.priority || "").trim();
         if (!isValidPriority(priorityRaw)) {
             return NextResponse.json({ error: "Invalid priority" }, { status: 400 });
@@ -114,12 +129,18 @@ export async function PATCH(
     }
 
     if (body.assigned_agent !== undefined) {
+        if (!hasRole(role, ["maker", "admin"])) {
+            return NextResponse.json({ error: "Only maker or admin can assign agents" }, { status: 403 });
+        }
         const assignedAgent = String(body.assigned_agent || "").trim();
         patch.assigned_agent = assignedAgent || null;
         history.push({ at: now, action: "agent_assigned", assigned_agent: assignedAgent || null });
     }
 
     if (body.result_summary !== undefined) {
+        if (!hasRole(role, ["maker", "admin"])) {
+            return NextResponse.json({ error: "Only maker or admin can update results" }, { status: 403 });
+        }
         const resultSummary = String(body.result_summary || "").trim();
         if (resultSummary.length > 8000) {
             return NextResponse.json({ error: "Result summary too long" }, { status: 400 });
@@ -133,6 +154,12 @@ export async function PATCH(
         if (!isValidApprovalAction(actionRaw)) {
             return NextResponse.json({ error: "Invalid approval action" }, { status: 400 });
         }
+        if (actionRaw === "request" && !hasRole(role, ["maker", "admin"])) {
+            return NextResponse.json({ error: "Only maker or admin can request approval" }, { status: 403 });
+        }
+        if ((actionRaw === "approve" || actionRaw === "reject") && !hasRole(role, ["checker", "admin"])) {
+            return NextResponse.json({ error: "Only checker or admin can approve/reject" }, { status: 403 });
+        }
         const note = String(body.approval_note || "").trim();
         if (note.length > 2000) {
             return NextResponse.json({ error: "Approval note too long" }, { status: 400 });
@@ -143,6 +170,9 @@ export async function PATCH(
         const currentState = latestApprovalState(history);
         if ((actionRaw === "approve" || actionRaw === "reject") && currentState !== "pending") {
             return NextResponse.json({ error: "No pending approval request for this task" }, { status: 409 });
+        }
+        if ((actionRaw === "approve" || actionRaw === "reject") && role === "maker") {
+            return NextResponse.json({ error: "Maker role cannot approve or reject requests" }, { status: 403 });
         }
         const assigneeRaw = String(body.approval_assignee || "").trim();
         if (assigneeRaw.length > 120) {

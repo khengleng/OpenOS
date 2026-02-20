@@ -1,6 +1,7 @@
 import { NextRequest, NextResponse } from "next/server";
 import { SignJWT } from "jose";
 import { createClient } from "@/lib/supabase/server";
+import { getCurrentUserRole, hasRole } from "@/lib/rbac";
 
 type TaskStatus = "todo" | "in_progress" | "blocked" | "done";
 type LaunchAuthMode = "jwt" | "token" | "none";
@@ -85,6 +86,11 @@ export async function POST(
 
     if (!user) {
         return NextResponse.json({ error: "Unauthorized" }, { status: 401 });
+    }
+
+    const role = await getCurrentUserRole(user.id);
+    if (!hasRole(role, ["maker", "admin"])) {
+        return NextResponse.json({ error: "Only maker or admin can run coworker tasks" }, { status: 403 });
     }
 
     const { data: existing, error: existingError } = await supabase
