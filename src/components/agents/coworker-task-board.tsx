@@ -18,10 +18,13 @@ type TaskTemplate = {
     id: string;
     name: string;
     category: TaskTemplateCategory;
+    pack: "general" | "finance_ops" | "sales_ops" | "hr_ops";
     title: string;
     description: string;
     priority: TaskPriority;
     requiresApproval: boolean;
+    defaultDueHours: number | null;
+    defaultEscalationPolicy: SlaPolicy;
 };
 
 type CoworkerTask = {
@@ -402,6 +405,12 @@ export function CoworkerTaskBoard() {
         setTitle(template.title);
         setDescription(template.description);
         setPriority(template.priority);
+        if (template.defaultDueHours && template.defaultDueHours > 0) {
+            setDueAt(dateTimeAfter(template.defaultDueHours / 24));
+        } else {
+            setDueAt("");
+        }
+        setEscalationPolicy(template.defaultEscalationPolicy || "none");
     }
 
     function formatHistoryEvent(entry: Record<string, unknown>): string {
@@ -531,7 +540,7 @@ export function CoworkerTaskBoard() {
                                     ) : null}
                                     {businessTemplates.map((template) => (
                                         <SelectItem key={template.id} value={template.id}>
-                                            {template.name}
+                                            {template.name} ({template.pack})
                                         </SelectItem>
                                     ))}
                                     {personalTemplates.length > 0 ? (
@@ -541,11 +550,18 @@ export function CoworkerTaskBoard() {
                                     ) : null}
                                     {personalTemplates.map((template) => (
                                         <SelectItem key={template.id} value={template.id}>
-                                            {template.name}
+                                            {template.name} ({template.pack})
                                         </SelectItem>
                                     ))}
                                 </SelectContent>
                             </Select>
+                            {selectedTemplateId !== "__custom" && templatesById.get(selectedTemplateId) ? (
+                                <p className="text-xs text-muted-foreground">
+                                    Pack: {templatesById.get(selectedTemplateId)?.pack}
+                                    {" | "}Approval: {templatesById.get(selectedTemplateId)?.requiresApproval ? "required" : "not required"}
+                                    {" | "}SLA default: {templatesById.get(selectedTemplateId)?.defaultDueHours ? `${templatesById.get(selectedTemplateId)?.defaultDueHours}h` : "none"}
+                                </p>
+                            ) : null}
                         </div>
                         <div className="space-y-2">
                             <Label htmlFor="task-title">Task Title</Label>
