@@ -5,6 +5,11 @@ export async function getAuthenticatedUserId(): Promise<string | null> {
     try {
         const supabase = await createClient();
         const {
+            data: { session },
+        } = await supabase.auth.getSession();
+        const sessionUserId = session?.user?.id ?? null;
+
+        const {
             data: { user },
             error
         } = await supabase.auth.getUser();
@@ -18,7 +23,9 @@ export async function getAuthenticatedUserId(): Promise<string | null> {
             }
         }
 
-        return user?.id ?? null;
+        // getUser is authoritative when available, but getSession is a stable
+        // fallback to avoid false 401 during transient auth lookup issues.
+        return user?.id ?? sessionUserId;
     } catch (err) {
         console.error("[getAuthenticatedUserId] createClient/getUser exception:", err);
         return null;

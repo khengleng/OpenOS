@@ -113,13 +113,20 @@ export async function proxyClawworkRequest(
         let authMode = await applyAuthHeaders(headers, initialMode);
         let upstreamResponse = await sendWithRetry(headers);
 
-        const canFallbackToToken =
-            authMode === "jwt"
-            && !!CLAWWORK_API_TOKEN
-            && (upstreamResponse.status === 401 || upstreamResponse.status === 403);
+        const isAuthDenied = upstreamResponse.status === 401 || upstreamResponse.status === 403;
+        if (isAuthDenied && authMode === "jwt") {
+            if (CLAWWORK_API_TOKEN) {
+                authMode = await applyAuthHeaders(headers, "token");
+                upstreamResponse = await sendWithRetry(headers);
+            } else {
+                authMode = await applyAuthHeaders(headers, "none");
+                upstreamResponse = await sendWithRetry(headers);
+            }
+        }
 
-        if (canFallbackToToken) {
-            authMode = await applyAuthHeaders(headers, "token");
+        const stillAuthDenied = upstreamResponse.status === 401 || upstreamResponse.status === 403;
+        if (stillAuthDenied && authMode === "token") {
+            authMode = await applyAuthHeaders(headers, "none");
             upstreamResponse = await sendWithRetry(headers);
         }
 
