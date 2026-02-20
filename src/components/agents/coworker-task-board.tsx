@@ -311,18 +311,24 @@ export function CoworkerTaskBoard() {
         setRunningTaskId(id);
         setMessage("");
         try {
+            const idempotencyKey = `run:${id}:${Date.now()}:${Math.random().toString(36).slice(2, 10)}`;
             const res = await fetch(`/api/coworker/tasks/${encodeURIComponent(id)}/run`, {
                 method: "POST",
-                headers: { "content-type": "application/json" },
+                headers: {
+                    "content-type": "application/json",
+                    "x-idempotency-key": idempotencyKey,
+                },
                 body: JSON.stringify({
                     model: (config?.model || "").trim() || undefined,
                     max_steps: config?.maxSteps,
                     max_retries: config?.maxRetries,
+                    idempotency_key: idempotencyKey,
                 }),
             });
             const txt = await res.text();
             if (!res.ok) throw new Error(parseApiError(txt, res.status));
-            setMessage("Task launched.");
+            const payload = txt ? JSON.parse(txt) as { idempotent_replay?: boolean } : {};
+            setMessage(payload.idempotent_replay ? "Task launch already accepted (idempotent replay)." : "Task launched.");
             await mutate();
         } catch (err) {
             setMessage(err instanceof Error ? err.message : "Failed to run task");
