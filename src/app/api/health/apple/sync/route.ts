@@ -1,4 +1,4 @@
-import { createHash } from "crypto";
+import { createHash, createHmac, timingSafeEqual } from "crypto";
 import { NextRequest, NextResponse } from "next/server";
 import { createClient } from "@/lib/supabase/server";
 import { getAuthenticatedUserId } from "@/lib/route-auth";
@@ -68,15 +68,36 @@ async function resolveUserFromIngestKey(ingestKey: string): Promise<string | nul
     return String(data.user_id || "") || null;
 }
 
+function verifySignedPayload(
+    ingestKey: string,
+    timestamp: string,
+    payloadText: string,
+    signatureHex: string,
+): boolean {
+    if (!timestamp || !signatureHex) return false;
+    const ts = Number(timestamp);
+    if (!Number.isFinite(ts)) return false;
+    const ageMs = Math.abs(Date.now() - ts);
+    if (ageMs > 5 * 60 * 1000) return false;
+
+    const expected = createHmac("sha256", ingestKey)
+        .update(`${timestamp}.${payloadText}`)
+        .digest("hex");
+    if (expected.length !== signatureHex.length) return false;
+    return timingSafeEqual(Buffer.from(expected, "hex"), Buffer.from(signatureHex, "hex"));
+}
+
 export async function POST(request: NextRequest) {
     const authUserId = await getAuthenticatedUserId();
     let userId = authUserId;
+    let ingestMode: "session" | "signed_key" = authUserId ? "session" : "signed_key";
+    let ingestKey = "";
 
     if (!userId) {
         const bearer = String(request.headers.get("authorization") || "").trim();
         const bearerToken = bearer.toLowerCase().startsWith("bearer ") ? bearer.slice(7).trim() : "";
         const headerToken = String(request.headers.get("x-apple-sync-key") || "").trim();
-        const ingestKey = headerToken || bearerToken;
+        ingestKey = headerToken || bearerToken;
         if (!ingestKey) {
             return NextResponse.json({ error: "Unauthorized" }, { status: 401 });
         }
@@ -86,7 +107,21 @@ export async function POST(request: NextRequest) {
         }
     }
 
-    const body = (await request.json().catch(() => ({}))) as Record<string, unknown>;
+    const payloadText = await request.text();
+    let body: Record<string, unknown> = {};
+    try {
+        body = (payloadText ? JSON.parse(payloadText) : {}) as Record<string, unknown>;
+    } catch {
+        return NextResponse.json({ error: "Invalid JSON payload" }, { status: 400 });
+    }
+    if (ingestMode === "signed_key") {
+        const signature = String(request.headers.get("x-apple-sync-signature") || "").trim().toLowerCase();
+        const timestamp = String(request.headers.get("x-apple-sync-ts") || "").trim();
+        if (!verifySignedPayload(ingestKey, timestamp, payloadText, signature)) {
+            return NextResponse.json({ error: "Invalid sync request signature" }, { status: 401 });
+        }
+    }
+
     const inputs = Array.isArray(body.metrics)
         ? (body.metrics as MetricInput[])
         : [body as MetricInput];
@@ -104,7 +139,14 @@ export async function POST(request: NextRequest) {
         return NextResponse.json({ error: "No valid metric payloads found" }, { status: 400 });
     }
 
-    const supabase = await createClient();
+    const supabase = ingestMode === "session" ? await createClient() : createAdminClient();
+    if (!supabase) {
+        return NextResponse.json(
+            { error: "Server misconfiguration: SUPABASE_SERVICE_ROLE_KEY is required for signed sync ingestion." },
+            { status: 500 },
+        );
+    }
+
     const { error } = await supabase
         .from("apple_health_daily_metrics")
         .upsert(rows, { onConflict: "user_id,metric_date" });
@@ -130,5 +172,6 @@ export async function POST(request: NextRequest) {
         status: "ok",
         ingested: rows.length,
         user_id: userId,
+        mode: ingestMode,
     });
 }

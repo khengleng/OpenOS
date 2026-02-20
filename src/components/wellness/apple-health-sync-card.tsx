@@ -186,12 +186,14 @@ export function AppleHealthSyncCard() {
                 ) : null}
 
                 <div className="rounded-md border border-dashed p-4 text-xs text-muted-foreground space-y-2">
-                    <p className="font-medium text-foreground flex items-center gap-2"><Smartphone className="h-3.5 w-3.5" /> iPhone setup (manual bridge)</p>
+                    <p className="font-medium text-foreground flex items-center gap-2"><Smartphone className="h-3.5 w-3.5" /> iPhone setup (real signed sync)</p>
                     <p>1) Generate sync key above.</p>
-                    <p>2) In iPhone Shortcuts/automation, POST daily metrics to <code>/api/health/apple/sync</code>.</p>
-                    <p>3) Add header <code>x-apple-sync-key: &lt;your_key&gt;</code> and send JSON with <code>date</code>, <code>steps</code>, <code>active_calories</code>, <code>resting_heart_rate</code>, <code>sleep_hours</code>.</p>
-                    <p className="flex items-center gap-1"><ShieldCheck className="h-3.5 w-3.5" /> Key is hashed server-side and tied to your account.</p>
-                    <p className="flex items-center gap-1"><Activity className="h-3.5 w-3.5" /> Data appears here after each sync.</p>
+                    <p>2) In your iPhone app/Shortcut, POST JSON to <code>/api/health/apple/sync</code>.</p>
+                    <p>3) Send headers:</p>
+                    <p><code>x-apple-sync-key</code>, <code>x-apple-sync-ts</code> (epoch ms), <code>x-apple-sync-signature</code> (HMAC-SHA256 hex of <code>{`<ts>.<raw_json>`}</code> using sync key).</p>
+                    <p>4) Payload supports <code>metrics[]</code> or single metric with <code>date</code>, <code>steps</code>, <code>active_calories</code>, <code>resting_heart_rate</code>, <code>sleep_hours</code>.</p>
+                    <p className="flex items-center gap-1"><ShieldCheck className="h-3.5 w-3.5" /> Sync key is hashed server-side and request signatures are verified.</p>
+                    <p className="flex items-center gap-1"><Activity className="h-3.5 w-3.5" /> Data is linked to your logged-in account and shown here after sync.</p>
                 </div>
 
                 {message ? <p className="text-xs text-muted-foreground">{message}</p> : null}
