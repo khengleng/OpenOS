@@ -1,12 +1,8 @@
 import { NextResponse } from "next/server";
 import { createClient } from "@/lib/supabase/server";
-import { cookies } from "next/headers";
 
 export async function getAuthenticatedUserId(): Promise<string | null> {
     try {
-        const cookieStore = await cookies();
-        console.log("[route-auth] cookie keys:", cookieStore.getAll().map(c => c.name).join(", "));
-
         const supabase = await createClient();
         const {
             data: { user },
@@ -14,7 +10,12 @@ export async function getAuthenticatedUserId(): Promise<string | null> {
         } = await supabase.auth.getUser();
 
         if (error) {
-            console.error("[getAuthenticatedUserId] getUser error:", error);
+            const name = String((error as { name?: unknown }).name || "");
+            const message = String((error as { message?: unknown }).message || "").toLowerCase();
+            const isMissingSession = name === "AuthSessionMissingError" || message.includes("auth session missing");
+            if (!isMissingSession) {
+                console.error("[getAuthenticatedUserId] getUser error:", error);
+            }
         }
 
         return user?.id ?? null;

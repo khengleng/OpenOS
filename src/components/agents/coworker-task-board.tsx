@@ -53,7 +53,9 @@ const fetcher = async <T,>(url: string): Promise<T> => {
     const res = await fetch(url);
     const txt = await res.text();
     if (!res.ok) {
-        throw new Error(parseApiError(txt, res.status));
+        const error = new Error(parseApiError(txt, res.status)) as Error & { status?: number };
+        error.status = res.status;
+        throw error;
     }
     return JSON.parse(txt) as T;
 };
@@ -118,18 +120,34 @@ function dateTimeAfter(days: number): string {
 }
 
 export function CoworkerTaskBoard() {
-    const { data, mutate, isLoading, error } = useSWR<{ tasks: CoworkerTask[] }>("/api/coworker/tasks", fetcher, {
-        refreshInterval: 8000,
+    const [authBlocked, setAuthBlocked] = useState(false);
+    const swrAuthOptions = {
+        onErrorRetry: (err: Error & { status?: number }, _key: string, _cfg: unknown, revalidate: (opts: { retryCount: number }) => void, ctx: { retryCount: number }) => {
+            const status = err?.status;
+            if (status === 401 || status === 403) {
+                setAuthBlocked(true);
+                return;
+            }
+            if (ctx.retryCount >= 2) return;
+            setTimeout(() => revalidate({ retryCount: ctx.retryCount + 1 }), 3000);
+        },
+        onSuccess: () => setAuthBlocked(false),
+    };
+    const { data, mutate, isLoading, error } = useSWR<{ tasks: CoworkerTask[] }>(authBlocked ? null : "/api/coworker/tasks", fetcher, {
+        refreshInterval: authBlocked ? 0 : 8000,
+        ...swrAuthOptions,
     });
-    const { data: agentsData } = useSWR<{ agents: AgentRecord[] }>("/api/clawwork/agents", fetcher, {
-        refreshInterval: 15000,
+    const { data: agentsData } = useSWR<{ agents: AgentRecord[] }>(authBlocked ? null : "/api/clawwork/agents", fetcher, {
+        refreshInterval: authBlocked ? 0 : 15000,
+        ...swrAuthOptions,
     });
-    const { data: simulationsData } = useSWR<{ simulations: SimulationRecord[] }>("/api/clawwork/simulations", fetcher, {
-        refreshInterval: 6000,
+    const { data: simulationsData } = useSWR<{ simulations: SimulationRecord[] }>(authBlocked ? null : "/api/clawwork/simulations", fetcher, {
+        refreshInterval: authBlocked ? 0 : 6000,
+        ...swrAuthOptions,
     });
-    const { data: templatesData } = useSWR<{ templates: TaskTemplate[] }>("/api/coworker/templates", fetcher);
-    const { data: roleData } = useSWR<{ role: AppRole }>("/api/rbac/me", fetcher);
-    const { data: modelData } = useSWR<{ models: ModelOption[] }>("/api/models/available", fetcher);
+    const { data: templatesData } = useSWR<{ templates: TaskTemplate[] }>(authBlocked ? null : "/api/coworker/templates", fetcher, swrAuthOptions);
+    const { data: roleData } = useSWR<{ role: AppRole }>(authBlocked ? null : "/api/rbac/me", fetcher, swrAuthOptions);
+    const { data: modelData } = useSWR<{ models: ModelOption[] }>(authBlocked ? null : "/api/models/available", fetcher, swrAuthOptions);
 
     const [title, setTitle] = useState("");
     const [description, setDescription] = useState("");
@@ -870,6 +888,9 @@ export function CoworkerTaskBoard() {
                 </CardHeader>
                 <CardContent className="space-y-3">
                     {error ? <p className="text-sm text-red-700">Failed to load tasks.</p> : null}
+                    {authBlocked ? (
+                        <p className="text-sm text-red-700">Session required. Please sign in again to manage coworker tasks.</p>
+                    ) : null}
                     {isLoading ? <p className="text-sm text-muted-foreground">Loading tasks...</p> : null}
                     {!isLoading && tasks.length === 0 ? (
                         <p className="text-sm text-muted-foreground">No coworker tasks yet. Create the first task above.</p>

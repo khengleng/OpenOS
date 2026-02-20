@@ -34,19 +34,33 @@ const fetcher = async <T,>(url: string): Promise<T> => {
     const res = await fetch(url)
     const txt = await res.text()
     if (!res.ok) {
+        const error = new Error(txt || `HTTP ${res.status}`) as Error & { status?: number }
+        error.status = res.status
         try {
             const payload = JSON.parse(txt) as Record<string, unknown>
-            throw new Error(String(payload.error || payload.detail || txt || `HTTP ${res.status}`))
+            error.message = String(payload.error || payload.detail || txt || `HTTP ${res.status}`)
+            throw error
         } catch {
-            throw new Error(txt || `HTTP ${res.status}`)
+            throw error
         }
     }
     return JSON.parse(txt) as T
 }
 
 export function AppleHealthSyncCard() {
+    const [authBlocked, setAuthBlocked] = useState(false)
     const { data, error, mutate, isLoading } = useSWR<AppleHealthStatus>('/api/health/apple', fetcher, {
-        refreshInterval: 15000,
+        refreshInterval: authBlocked ? 0 : 15000,
+        onErrorRetry: (err, _key, _cfg, revalidate, ctx) => {
+            const status = (err as { status?: number })?.status
+            if (status === 401 || status === 403) {
+                setAuthBlocked(true)
+                return
+            }
+            if (ctx.retryCount >= 2) return
+            setTimeout(() => revalidate({ retryCount: ctx.retryCount + 1 }), 3000)
+        },
+        onSuccess: () => setAuthBlocked(false),
     })
     const [syncKey, setSyncKey] = useState('')
     const [busy, setBusy] = useState<'rotate' | 'disable' | null>(null)
@@ -251,7 +265,9 @@ export function AppleHealthSyncCard() {
             <CardContent className="space-y-4">
                 {error ? (
                     <div className="rounded-md border border-amber-200 bg-amber-50 p-3 text-sm text-amber-900">
-                        {String(error.message || 'Unable to load Apple Health status.')}
+                        {(error as { status?: number })?.status === 401
+                            ? 'Session required. Please sign in again to view Apple Health status.'
+                            : String(error.message || 'Unable to load Apple Health status.')}
                     </div>
                 ) : null}
 

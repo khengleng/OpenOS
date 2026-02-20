@@ -26,7 +26,11 @@ function mapLoginError(message: string): string {
 async function getAppBaseUrl() {
     const configured = process.env.NEXT_PUBLIC_SITE_URL?.trim()
     if (configured) {
-        return configured.replace(/\/$/, '')
+        const normalized = configured.replace(/\/$/, '')
+        const isLocalhost = /localhost|127\.0\.0\.1/i.test(normalized)
+        if (!(process.env.NODE_ENV === 'production' && isLocalhost)) {
+            return normalized
+        }
     }
 
     const headerStore = await headers()

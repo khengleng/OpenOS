@@ -1,5 +1,6 @@
 "use client";
 
+import { useState } from "react";
 import useSWR from "swr";
 import { Agent, AgentCard } from "./agent-card";
 import { LaunchAgentDialog } from "./launch-agent-dialog";
@@ -53,17 +54,40 @@ const fetcher = async (url: string) => {
         } catch {
             // Best-effort parse only.
         }
-        throw new Error(detail || `HTTP ${res.status}`);
+        const error = new Error(detail || `HTTP ${res.status}`) as Error & { status?: number };
+        error.status = res.status;
+        throw error;
     }
     return JSON.parse(payload);
 };
 
 export function AgentDashboard() {
-    const { data, error, isLoading } = useSWR<{ agents: Agent[] }>(`${API_BASE}/agents`, fetcher, {
-        refreshInterval: 5000 // Poll every 5 seconds
+    const [authBlocked, setAuthBlocked] = useState(false);
+    const { data, error, isLoading } = useSWR<{ agents: Agent[] }>(authBlocked ? null : `${API_BASE}/agents`, fetcher, {
+        refreshInterval: authBlocked ? 0 : 5000, // Poll every 5 seconds
+        onErrorRetry: (err, _key, _cfg, revalidate, ctx) => {
+            const status = (err as { status?: number })?.status;
+            if (status === 401 || status === 403) {
+                setAuthBlocked(true);
+                return;
+            }
+            if (ctx.retryCount >= 3) return;
+            setTimeout(() => revalidate({ retryCount: ctx.retryCount + 1 }), 3000);
+        },
+        onSuccess: () => setAuthBlocked(false),
     });
-    const { data: simulationsData } = useSWR<{ simulations: Simulation[] }>(`${API_BASE}/simulations`, fetcher, {
-        refreshInterval: 5000 // Poll every 5 seconds
+    const { data: simulationsData } = useSWR<{ simulations: Simulation[] }>(authBlocked ? null : `${API_BASE}/simulations`, fetcher, {
+        refreshInterval: authBlocked ? 0 : 5000, // Poll every 5 seconds
+        onErrorRetry: (err, _key, _cfg, revalidate, ctx) => {
+            const status = (err as { status?: number })?.status;
+            if (status === 401 || status === 403) {
+                setAuthBlocked(true);
+                return;
+            }
+            if (ctx.retryCount >= 3) return;
+            setTimeout(() => revalidate({ retryCount: ctx.retryCount + 1 }), 3000);
+        },
+        onSuccess: () => setAuthBlocked(false),
     });
     const agents = data?.agents || [];
     const simulations = [...(simulationsData?.simulations || [])].sort((a, b) => {
@@ -148,17 +172,24 @@ export function AgentDashboard() {
     };
 
     if (error) {
+        const status = (error as { status?: number })?.status;
         return (
             <div className="p-4 border border-red-200 bg-red-50 rounded-lg text-red-900 space-y-4">
                 <div className="flex items-center gap-2 font-semibold">
                     <AlertCircle className="h-4 w-4" />
-                    Error connecting to Agent Network
+                    {status === 401 ? "Session Required" : "Error connecting to Agent Network"}
                 </div>
-                <p className="text-sm">
-                    Could not fetch agents. Ensure the backend is reachable from this app and one of these is configured:
-                    `CLAWWORK_INTERNAL_URL` (same Railway project private network) or `NEXT_PUBLIC_CLAWWORK_API_URL`
-                    (public ClawWork URL for separate projects).
-                </p>
+                {status === 401 ? (
+                    <p className="text-sm">
+                        Your session is not authenticated. Sign in again to view and manage AI coworkers.
+                    </p>
+                ) : (
+                    <p className="text-sm">
+                        Could not fetch agents. Ensure the backend is reachable from this app and one of these is configured:
+                        `CLAWWORK_INTERNAL_URL` (same Railway project private network) or `NEXT_PUBLIC_CLAWWORK_API_URL`
+                        (public ClawWork URL for separate projects).
+                    </p>
+                )}
                 <p className="text-xs text-red-800 break-all">{String(error.message || "")}</p>
                 <div className="flex gap-2">
                     <LaunchAgentDialog />
