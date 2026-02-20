@@ -22,6 +22,9 @@ export async function updateSession(request: NextRequest) {
     // issues with users being randomly logged out.
 
     let hasUser = false
+    const hasAuthCookie = request.cookies
+        .getAll()
+        .some((cookie) => cookie.name.includes("-auth-token"))
     try {
         const {
             data: { session },
@@ -42,7 +45,8 @@ export async function updateSession(request: NextRequest) {
         // Avoid logging users out during temporary auth service/network issues.
     }
 
-    if (shouldRedirectToLogin(request, hasUser)) {
+    // If auth cookies exist, avoid force-redirecting to /login on transient auth checks.
+    if (shouldRedirectToLogin(request, hasUser || hasAuthCookie)) {
         return NextResponse.redirect(createLoginRedirect(request))
     }
 
