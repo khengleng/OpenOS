@@ -6,6 +6,8 @@ import { Card, CardContent, CardDescription, CardHeader, CardTitle } from '@/com
 import { Input } from '@/components/ui/input'
 import { Label } from '@/components/ui/label'
 import { Button } from '@/components/ui/button'
+import { Badge } from '@/components/ui/badge'
+import { Select, SelectContent, SelectItem, SelectTrigger, SelectValue } from '@/components/ui/select'
 
 type AppRole = 'maker' | 'checker' | 'admin'
 type MeResponse = {
@@ -20,6 +22,7 @@ type RoleAssignment = {
     user_id: string
     role: AppRole
     updated_at: string
+    email?: string | null
 }
 
 const fetcher = async <T,>(url: string): Promise<T> => {
@@ -50,12 +53,18 @@ export function RoleManagement() {
     const [message, setMessage] = useState('')
     const [busyUserId, setBusyUserId] = useState<string | null>(null)
     const [bootstrapping, setBootstrapping] = useState(false)
+    const [searchQuery, setSearchQuery] = useState('')
 
     const assignments = data?.assignments || []
-    const sortedAssignments = useMemo(
-        () => [...assignments].sort((a, b) => new Date(b.updated_at).getTime() - new Date(a.updated_at).getTime()),
-        [assignments],
-    )
+    const sortedAssignments = useMemo(() => {
+        const query = searchQuery.trim().toLowerCase()
+        return [...assignments]
+            .filter((entry) => {
+                if (!query) return true
+                return entry.user_id.toLowerCase().includes(query) || String(entry.email || '').toLowerCase().includes(query)
+            })
+            .sort((a, b) => new Date(b.updated_at).getTime() - new Date(a.updated_at).getTime())
+    }, [assignments, searchQuery])
 
     async function saveRole(userId: string, role: AppRole) {
         setBusyUserId(userId)
@@ -72,6 +81,29 @@ export function RoleManagement() {
             setMessage(`Role updated for ${userId}`)
         } catch (err) {
             setMessage(err instanceof Error ? err.message : 'Failed to update role')
+        } finally {
+            setBusyUserId(null)
+        }
+    }
+
+    async function revokeRole(userId: string) {
+        setBusyUserId(userId)
+        setMessage('')
+        try {
+            const res = await fetch(`/api/rbac/users/${encodeURIComponent(userId)}`, { method: 'DELETE' })
+            const txt = await res.text()
+            if (!res.ok) {
+                try {
+                    const payload = JSON.parse(txt) as Record<string, unknown>
+                    throw new Error(String(payload.error || payload.detail || txt || 'Failed to revoke role'))
+                } catch {
+                    throw new Error(txt || 'Failed to revoke role')
+                }
+            }
+            await mutate()
+            setMessage(`Role revoked for ${userId}`)
+        } catch (err) {
+            setMessage(err instanceof Error ? err.message : 'Failed to revoke role')
         } finally {
             setBusyUserId(null)
         }
@@ -186,16 +218,16 @@ export function RoleManagement() {
                         placeholder="Supabase user UUID"
                     />
                     <Label htmlFor="role_value">Role</Label>
-                    <select
-                        id="role_value"
-                        value={targetRole}
-                        onChange={(e) => setTargetRole(e.target.value as AppRole)}
-                        className="h-10 w-full rounded-md border border-input bg-background px-3 py-2 text-sm"
-                    >
-                        <option value="maker">maker</option>
-                        <option value="checker">checker</option>
-                        <option value="admin">admin</option>
-                    </select>
+                    <Select value={targetRole} onValueChange={(value) => setTargetRole(value as AppRole)}>
+                        <SelectTrigger id="role_value">
+                            <SelectValue />
+                        </SelectTrigger>
+                        <SelectContent>
+                            <SelectItem value="maker">maker</SelectItem>
+                            <SelectItem value="checker">checker</SelectItem>
+                            <SelectItem value="admin">admin</SelectItem>
+                        </SelectContent>
+                    </Select>
                     <Button
                         className="w-fit"
                         disabled={!targetUserId.trim() || busyUserId === '__new__'}
@@ -207,10 +239,39 @@ export function RoleManagement() {
 
                 {message ? <p className="text-sm text-muted-foreground">{message}</p> : null}
 
+                <div className="rounded-md border p-3 space-y-2">
+                    <p className="text-sm font-medium">Role Permission Matrix</p>
+                    <div className="text-xs text-muted-foreground grid gap-2 md:grid-cols-3">
+                        <div className="rounded border p-2 space-y-1">
+                            <Badge variant="secondary">maker</Badge>
+                            <p>Create tasks</p>
+                            <p>Run/complete tasks</p>
+                            <p>Request approval</p>
+                        </div>
+                        <div className="rounded border p-2 space-y-1">
+                            <Badge variant="secondary">checker</Badge>
+                            <p>Approve/reject tasks</p>
+                            <p>Cannot run or create tasks</p>
+                        </div>
+                        <div className="rounded border p-2 space-y-1">
+                            <Badge variant="secondary">admin</Badge>
+                            <p>All maker + checker permissions</p>
+                            <p>Manage role assignments</p>
+                        </div>
+                    </div>
+                </div>
+
                 {isLoading ? (
                     <p className="text-sm text-muted-foreground">Loading assignments...</p>
                 ) : (
                     <div className="space-y-2">
+                        <div className="max-w-sm">
+                            <Input
+                                value={searchQuery}
+                                onChange={(e) => setSearchQuery(e.target.value)}
+                                placeholder="Filter by user ID or email..."
+                            />
+                        </div>
                         {sortedAssignments.length === 0 ? (
                             <p className="text-sm text-muted-foreground">No role assignments found.</p>
                         ) : (
@@ -218,31 +279,46 @@ export function RoleManagement() {
                                 const currentDraft = draftRoles[entry.user_id] || entry.role
                                 return (
                                     <div key={entry.user_id} className="rounded-md border p-3 space-y-2">
-                                        <p className="text-sm font-medium">{entry.user_id}</p>
+                                        <p className="text-sm font-medium break-all">{entry.user_id}</p>
+                                        {entry.email ? (
+                                            <p className="text-xs text-muted-foreground break-all">{entry.email}</p>
+                                        ) : null}
                                         <p className="text-xs text-muted-foreground">
                                             Updated {new Date(entry.updated_at).toLocaleString()}
                                         </p>
                                         <div className="flex items-center gap-2">
-                                            <select
+                                            <Select
                                                 value={currentDraft}
-                                                onChange={(e) =>
+                                                onValueChange={(value) =>
                                                     setDraftRoles((prev) => ({
                                                         ...prev,
-                                                        [entry.user_id]: e.target.value as AppRole,
+                                                        [entry.user_id]: value as AppRole,
                                                     }))
                                                 }
-                                                className="h-9 rounded-md border border-input bg-background px-2 text-sm"
                                             >
-                                                <option value="maker">maker</option>
-                                                <option value="checker">checker</option>
-                                                <option value="admin">admin</option>
-                                            </select>
+                                                <SelectTrigger className="w-[140px]">
+                                                    <SelectValue />
+                                                </SelectTrigger>
+                                                <SelectContent>
+                                                    <SelectItem value="maker">maker</SelectItem>
+                                                    <SelectItem value="checker">checker</SelectItem>
+                                                    <SelectItem value="admin">admin</SelectItem>
+                                                </SelectContent>
+                                            </Select>
                                             <Button
                                                 size="sm"
                                                 disabled={busyUserId === entry.user_id}
                                                 onClick={() => saveRole(entry.user_id, currentDraft)}
                                             >
                                                 {busyUserId === entry.user_id ? 'Saving...' : 'Save'}
+                                            </Button>
+                                            <Button
+                                                size="sm"
+                                                variant="outline"
+                                                disabled={busyUserId === entry.user_id}
+                                                onClick={() => revokeRole(entry.user_id)}
+                                            >
+                                                Revoke
                                             </Button>
                                         </div>
                                     </div>

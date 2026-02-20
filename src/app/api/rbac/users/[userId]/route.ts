@@ -58,3 +58,39 @@ export async function PATCH(
 
     return NextResponse.json({ assignment: data });
 }
+
+export async function DELETE(
+    _request: NextRequest,
+    context: { params: Promise<{ userId: string }> },
+) {
+    const requesterId = await getAuthenticatedUserId();
+    if (!requesterId) return unauthorizedResponse();
+
+    const requesterRole = await getCurrentUserRole(requesterId);
+    if (requesterRole !== "admin") {
+        return NextResponse.json({ error: "Only admin can remove roles" }, { status: 403 });
+    }
+
+    const { userId } = await context.params;
+    if (!userId || userId === requesterId) {
+        return NextResponse.json({ error: "Admin cannot remove their own role" }, { status: 400 });
+    }
+
+    const supabase = await createClient();
+    const { error } = await supabase
+        .from("user_roles")
+        .delete()
+        .eq("user_id", userId);
+
+    if (error) {
+        if (isMissingUserRolesTableError(error)) {
+            return NextResponse.json(
+                { error: "RBAC schema missing. Run Supabase migration for public.user_roles." },
+                { status: 503 },
+            );
+        }
+        return NextResponse.json({ error: "Failed to remove role assignment" }, { status: 500 });
+    }
+
+    return NextResponse.json({ ok: true, user_id: userId });
+}

@@ -2,6 +2,7 @@ import { NextResponse } from "next/server";
 import { getAuthenticatedUserId, unauthorizedResponse } from "@/lib/route-auth";
 import { getCurrentUserRole } from "@/lib/rbac";
 import { createClient } from "@/lib/supabase/server";
+import { createAdminClient } from "@/lib/supabase/admin";
 
 function isMissingUserRolesTableError(error: unknown): boolean {
     const code = typeof error === "object" && error !== null && "code" in error
@@ -38,5 +39,28 @@ export async function GET() {
         return NextResponse.json({ error: "Failed to list role assignments" }, { status: 500 });
     }
 
-    return NextResponse.json({ assignments: data || [] });
+    const admin = createAdminClient();
+    const assignments = (data || []) as Array<{
+        user_id: string;
+        role: string;
+        created_at?: string;
+        updated_at?: string;
+    }>;
+    if (!admin || assignments.length === 0) {
+        return NextResponse.json({ assignments });
+    }
+
+    const withEmail = await Promise.all(
+        assignments.map(async (assignment) => {
+            try {
+                const userRes = await admin.auth.admin.getUserById(assignment.user_id);
+                const email = userRes.data.user?.email || null;
+                return { ...assignment, email };
+            } catch {
+                return { ...assignment, email: null };
+            }
+        }),
+    );
+
+    return NextResponse.json({ assignments: withEmail });
 }
