@@ -105,6 +105,7 @@ export function CoworkerTaskBoard() {
     const [approvalNoteDraft, setApprovalNoteDraft] = useState<Record<string, string>>({});
     const [approvalAssigneeDraft, setApprovalAssigneeDraft] = useState<Record<string, string>>({});
     const [submitting, setSubmitting] = useState(false);
+    const [submittingAndRunning, setSubmittingAndRunning] = useState(false);
     const [runningTaskId, setRunningTaskId] = useState<string | null>(null);
     const [exportingFormat, setExportingFormat] = useState<"csv" | "json" | null>(null);
     const [message, setMessage] = useState<string>("");
@@ -140,8 +141,12 @@ export function CoworkerTaskBoard() {
     const businessTemplates = templates.filter((template) => template.category === "business");
     const personalTemplates = templates.filter((template) => template.category === "personal");
 
-    async function createTask() {
-        setSubmitting(true);
+    async function createTask(runImmediately: boolean) {
+        if (runImmediately) {
+            setSubmittingAndRunning(true);
+        } else {
+            setSubmitting(true);
+        }
         setMessage("");
         try {
             const res = await fetch("/api/coworker/tasks", {
@@ -160,17 +165,26 @@ export function CoworkerTaskBoard() {
             });
             const txt = await res.text();
             if (!res.ok) throw new Error(parseApiError(txt, res.status));
+            const created = JSON.parse(txt) as { task?: CoworkerTask };
+
             setTitle("");
             setDescription("");
             setPriority("medium");
             setAssignedAgent("__unassigned");
             setSelectedTemplateId("__custom");
-            setMessage("Task created.");
             await mutate();
+
+            if (runImmediately && created.task?.id) {
+                await runTask(created.task.id);
+                return;
+            }
+
+            setMessage("Task created.");
         } catch (err) {
             setMessage(err instanceof Error ? err.message : "Failed to create task");
         } finally {
             setSubmitting(false);
+            setSubmittingAndRunning(false);
         }
     }
 
@@ -425,13 +439,33 @@ export function CoworkerTaskBoard() {
                                 </SelectContent>
                             </Select>
                         </div>
-                        <Button
-                            onClick={createTask}
-                            disabled={submitting || !title.trim() || !(role === "maker" || role === "admin")}
-                            className="w-full"
-                        >
-                            {submitting ? "Creating..." : "Create Coworker Task"}
-                        </Button>
+                        <div className="grid gap-2 sm:grid-cols-2">
+                            <Button
+                                onClick={() => createTask(false)}
+                                disabled={
+                                    submitting
+                                    || submittingAndRunning
+                                    || !title.trim()
+                                    || !(role === "maker" || role === "admin")
+                                }
+                                className="w-full"
+                            >
+                                {submitting ? "Creating..." : "Create Coworker Task"}
+                            </Button>
+                            <Button
+                                onClick={() => createTask(true)}
+                                disabled={
+                                    submitting
+                                    || submittingAndRunning
+                                    || !title.trim()
+                                    || !(role === "maker" || role === "admin")
+                                }
+                                className="w-full"
+                                variant="secondary"
+                            >
+                                {submittingAndRunning ? "Creating + Launching..." : "Create & Run"}
+                            </Button>
+                        </div>
                         {role ? <p className="text-xs text-muted-foreground">Your role: {role}</p> : null}
                         {message ? <p className="text-xs text-muted-foreground">{message}</p> : null}
                     </div>
