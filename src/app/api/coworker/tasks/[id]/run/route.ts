@@ -76,7 +76,7 @@ async function generateTenantJwt(tenantId: string): Promise<string> {
 }
 
 export async function POST(
-    _request: NextRequest,
+    request: NextRequest,
     context: { params: Promise<{ id: string }> },
 ) {
     const { id } = await context.params;
@@ -111,6 +111,17 @@ export async function POST(
         return NextResponse.json({ error: "Task not found" }, { status: 404 });
     }
 
+    const body = (await request.json().catch(() => ({}))) as Record<string, unknown>;
+    const requestedModel = String(body.model || "").trim();
+    const requestedMaxStepsRaw = Number(body.max_steps);
+    const requestedMaxRetriesRaw = Number(body.max_retries);
+    const requestedMaxSteps = Number.isFinite(requestedMaxStepsRaw)
+        ? Math.max(1, Math.min(60, Math.floor(requestedMaxStepsRaw)))
+        : null;
+    const requestedMaxRetries = Number.isFinite(requestedMaxRetriesRaw)
+        ? Math.max(0, Math.min(10, Math.floor(requestedMaxRetriesRaw)))
+        : null;
+
     const now = new Date().toISOString();
     const signature = String(existing.assigned_agent || "").trim() || `task-${id.slice(0, 8)}`;
     const history = Array.isArray(existing.history) ? [...existing.history] : [];
@@ -123,7 +134,8 @@ export async function POST(
     }
     const prompt = buildInlinePrompt(String(existing.title || "Untitled task"), existing.description);
     const userMetadata = (user.user_metadata || {}) as Record<string, unknown>;
-    const model = String(userMetadata.workspace_default_model || DEFAULT_WORKSPACE_MODEL).trim() || DEFAULT_WORKSPACE_MODEL;
+    const defaultModel = String(userMetadata.workspace_default_model || DEFAULT_WORKSPACE_MODEL).trim() || DEFAULT_WORKSPACE_MODEL;
+    const model = requestedModel || defaultModel;
 
     const config = {
         livebench: {
@@ -162,8 +174,8 @@ export async function POST(
                 },
             ],
             agent_params: {
-                max_steps: 20,
-                max_retries: 2,
+                max_steps: requestedMaxSteps ?? 20,
+                max_retries: requestedMaxRetries ?? 2,
                 base_delay: 0.5,
                 tasks_per_day: 1,
             },
@@ -285,6 +297,10 @@ export async function POST(
         simulation_id: simulationId || null,
         signature,
         model,
+        run_config: {
+            max_steps: requestedMaxSteps ?? 20,
+            max_retries: requestedMaxRetries ?? 2,
+        },
     });
 
     const patch: {

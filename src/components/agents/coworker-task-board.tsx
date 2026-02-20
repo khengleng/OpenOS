@@ -41,6 +41,8 @@ type AgentRecord = { signature: string };
 type SimulationRecord = { id: string; status?: string; start_time?: string; end_time?: string };
 type ApprovalState = "none" | "pending" | "approved" | "rejected";
 type AppRole = "maker" | "checker" | "admin";
+type ModelOption = { value: string; label: string; provider: string };
+type RunConfigDraft = { model: string; maxSteps: number; maxRetries: number };
 
 const fetcher = async <T,>(url: string): Promise<T> => {
     const res = await fetch(url);
@@ -95,6 +97,7 @@ export function CoworkerTaskBoard() {
     });
     const { data: templatesData } = useSWR<{ templates: TaskTemplate[] }>("/api/coworker/templates", fetcher);
     const { data: roleData } = useSWR<{ role: AppRole }>("/api/rbac/me", fetcher);
+    const { data: modelData } = useSWR<{ models: ModelOption[] }>("/api/models/available", fetcher);
 
     const [title, setTitle] = useState("");
     const [description, setDescription] = useState("");
@@ -108,10 +111,16 @@ export function CoworkerTaskBoard() {
     const [submittingAndRunning, setSubmittingAndRunning] = useState(false);
     const [runningTaskId, setRunningTaskId] = useState<string | null>(null);
     const [exportingFormat, setExportingFormat] = useState<"csv" | "json" | null>(null);
+    const [runConfigDraft, setRunConfigDraft] = useState<Record<string, RunConfigDraft>>({});
+    const [searchQuery, setSearchQuery] = useState("");
+    const [statusFilter, setStatusFilter] = useState<"all" | TaskStatus>("all");
+    const [priorityFilter, setPriorityFilter] = useState<"all" | TaskPriority>("all");
+    const [approvalFilter, setApprovalFilter] = useState<"all" | ApprovalState>("all");
     const [message, setMessage] = useState<string>("");
 
     const tasks = data?.tasks || [];
     const templates = templatesData?.templates || [];
+    const availableModels = modelData?.models || [];
     const role = roleData?.role || null;
     const agentOptions = useMemo(
         () =>
@@ -131,6 +140,21 @@ export function CoworkerTaskBoard() {
         () => tasks.filter((task) => latestApprovalState(task) === "pending"),
         [tasks],
     );
+
+    const filteredTasks = useMemo(() => {
+        return tasks.filter((task) => {
+            const statusMatch = statusFilter === "all" || task.status === statusFilter;
+            const priorityMatch = priorityFilter === "all" || task.priority === priorityFilter;
+            const approvalMatch = approvalFilter === "all" || latestApprovalState(task) === approvalFilter;
+            const query = searchQuery.trim().toLowerCase();
+            const textMatch = !query
+                || task.title.toLowerCase().includes(query)
+                || String(task.description || "").toLowerCase().includes(query)
+                || String(task.assigned_agent || "").toLowerCase().includes(query)
+                || String(task.result_summary || "").toLowerCase().includes(query);
+            return statusMatch && priorityMatch && approvalMatch && textMatch;
+        });
+    }, [tasks, statusFilter, priorityFilter, approvalFilter, searchQuery]);
 
     const templatesById = useMemo(() => {
         const map = new Map<string, TaskTemplate>();
@@ -175,7 +199,7 @@ export function CoworkerTaskBoard() {
             await mutate();
 
             if (runImmediately && created.task?.id) {
-                await runTask(created.task.id);
+                await runTask(created.task.id, getRunConfig(created.task.id));
                 return;
             }
 
@@ -208,12 +232,22 @@ export function CoworkerTaskBoard() {
         }
     }
 
-    async function runTask(id: string) {
+    function getRunConfig(taskId: string): RunConfigDraft {
+        return runConfigDraft[taskId] || { model: "", maxSteps: 20, maxRetries: 2 };
+    }
+
+    async function runTask(id: string, config?: RunConfigDraft) {
         setRunningTaskId(id);
         setMessage("");
         try {
             const res = await fetch(`/api/coworker/tasks/${encodeURIComponent(id)}/run`, {
                 method: "POST",
+                headers: { "content-type": "application/json" },
+                body: JSON.stringify({
+                    model: (config?.model || "").trim() || undefined,
+                    max_steps: config?.maxSteps,
+                    max_retries: config?.maxRetries,
+                }),
             });
             const txt = await res.text();
             if (!res.ok) throw new Error(parseApiError(txt, res.status));
@@ -284,6 +318,16 @@ export function CoworkerTaskBoard() {
         setTitle(template.title);
         setDescription(template.description);
         setPriority(template.priority);
+    }
+
+    function formatHistoryEvent(entry: Record<string, unknown>): string {
+        const action = String(entry.action || "event");
+        if (action === "approval_requested") return "Approval requested";
+        if (action === "approval_approved") return "Approval approved";
+        if (action === "approval_rejected") return "Approval rejected";
+        if (action === "simulation_started") return "Simulation started";
+        if (action === "created") return "Task created";
+        return action.replaceAll("_", " ");
     }
 
     async function exportTasks(format: "csv" | "json") {
@@ -467,6 +511,11 @@ export function CoworkerTaskBoard() {
                             </Button>
                         </div>
                         {role ? <p className="text-xs text-muted-foreground">Your role: {role}</p> : null}
+                        {role === "checker" ? (
+                            <p className="text-xs text-muted-foreground">
+                                Checker view: you can approve/reject tasks but cannot create or launch runs.
+                            </p>
+                        ) : null}
                         {message ? <p className="text-xs text-muted-foreground">{message}</p> : null}
                     </div>
                 </CardContent>
@@ -547,7 +596,62 @@ export function CoworkerTaskBoard() {
 
             <Card>
                 <CardHeader>
-                    <CardTitle>Task Lifecycle</CardTitle>
+                    <div className="flex flex-col gap-3">
+                        <CardTitle>Task Lifecycle</CardTitle>
+                        <div className="grid gap-2 md:grid-cols-4">
+                            <Input
+                                placeholder="Search title/description/agent..."
+                                value={searchQuery}
+                                onChange={(e) => setSearchQuery(e.target.value)}
+                            />
+                            <Select value={statusFilter} onValueChange={(value) => setStatusFilter(value as "all" | TaskStatus)}>
+                                <SelectTrigger><SelectValue placeholder="Status" /></SelectTrigger>
+                                <SelectContent>
+                                    <SelectItem value="all">All Status</SelectItem>
+                                    <SelectItem value="todo">To Do</SelectItem>
+                                    <SelectItem value="in_progress">In Progress</SelectItem>
+                                    <SelectItem value="blocked">Blocked</SelectItem>
+                                    <SelectItem value="done">Done</SelectItem>
+                                </SelectContent>
+                            </Select>
+                            <Select value={priorityFilter} onValueChange={(value) => setPriorityFilter(value as "all" | TaskPriority)}>
+                                <SelectTrigger><SelectValue placeholder="Priority" /></SelectTrigger>
+                                <SelectContent>
+                                    <SelectItem value="all">All Priorities</SelectItem>
+                                    <SelectItem value="low">Low</SelectItem>
+                                    <SelectItem value="medium">Medium</SelectItem>
+                                    <SelectItem value="high">High</SelectItem>
+                                </SelectContent>
+                            </Select>
+                            <Select value={approvalFilter} onValueChange={(value) => setApprovalFilter(value as "all" | ApprovalState)}>
+                                <SelectTrigger><SelectValue placeholder="Approval" /></SelectTrigger>
+                                <SelectContent>
+                                    <SelectItem value="all">All Approval States</SelectItem>
+                                    <SelectItem value="none">None</SelectItem>
+                                    <SelectItem value="pending">Pending</SelectItem>
+                                    <SelectItem value="approved">Approved</SelectItem>
+                                    <SelectItem value="rejected">Rejected</SelectItem>
+                                </SelectContent>
+                            </Select>
+                        </div>
+                        <div className="flex items-center justify-between">
+                            <p className="text-xs text-muted-foreground">
+                                Showing {filteredTasks.length} of {tasks.length} tasks.
+                            </p>
+                            <Button
+                                size="sm"
+                                variant="outline"
+                                onClick={() => {
+                                    setSearchQuery("");
+                                    setStatusFilter("all");
+                                    setPriorityFilter("all");
+                                    setApprovalFilter("all");
+                                }}
+                            >
+                                Clear Filters
+                            </Button>
+                        </div>
+                    </div>
                 </CardHeader>
                 <CardContent className="space-y-3">
                     {error ? <p className="text-sm text-red-700">Failed to load tasks.</p> : null}
@@ -555,7 +659,10 @@ export function CoworkerTaskBoard() {
                     {!isLoading && tasks.length === 0 ? (
                         <p className="text-sm text-muted-foreground">No coworker tasks yet. Create the first task above.</p>
                     ) : null}
-                    {tasks.map((task) => (
+                    {!isLoading && tasks.length > 0 && filteredTasks.length === 0 ? (
+                        <p className="text-sm text-muted-foreground">No tasks match the current filters.</p>
+                    ) : null}
+                    {filteredTasks.map((task) => (
                         <div key={task.id} className="rounded-md border p-3 space-y-2">
                             {(() => {
                                 const simId = latestSimulationId(task);
@@ -600,6 +707,68 @@ export function CoworkerTaskBoard() {
                                     <span className="font-medium">Result:</span> {task.result_summary}
                                 </p>
                             ) : null}
+                            <div className="grid gap-2 md:grid-cols-3">
+                                <div className="space-y-1">
+                                    <Label className="text-xs">Run model override</Label>
+                                    <Select
+                                        value={getRunConfig(task.id).model || "__workspace_default"}
+                                        onValueChange={(value) =>
+                                            setRunConfigDraft((prev) => ({
+                                                ...prev,
+                                                [task.id]: {
+                                                    ...getRunConfig(task.id),
+                                                    model: value === "__workspace_default" ? "" : value,
+                                                },
+                                            }))}
+                                    >
+                                        <SelectTrigger>
+                                            <SelectValue placeholder="Workspace default" />
+                                        </SelectTrigger>
+                                        <SelectContent>
+                                            <SelectItem value="__workspace_default">Workspace default</SelectItem>
+                                            {availableModels.map((model) => (
+                                                <SelectItem key={model.value} value={model.value}>
+                                                    {model.label} ({model.provider})
+                                                </SelectItem>
+                                            ))}
+                                        </SelectContent>
+                                    </Select>
+                                </div>
+                                <div className="space-y-1">
+                                    <Label className="text-xs">Max steps (1-60)</Label>
+                                    <Input
+                                        type="number"
+                                        min={1}
+                                        max={60}
+                                        value={getRunConfig(task.id).maxSteps}
+                                        onChange={(e) =>
+                                            setRunConfigDraft((prev) => ({
+                                                ...prev,
+                                                [task.id]: {
+                                                    ...getRunConfig(task.id),
+                                                    maxSteps: Math.max(1, Math.min(60, Number(e.target.value || 20))),
+                                                },
+                                            }))}
+                                    />
+                                </div>
+                                <div className="space-y-1">
+                                    <Label className="text-xs">Max retries (0-10)</Label>
+                                    <Input
+                                        type="number"
+                                        min={0}
+                                        max={10}
+                                        value={getRunConfig(task.id).maxRetries}
+                                        onChange={(e) =>
+                                            setRunConfigDraft((prev) => ({
+                                                ...prev,
+                                                [task.id]: {
+                                                    ...getRunConfig(task.id),
+                                                    maxRetries: Math.max(0, Math.min(10, Number(e.target.value || 2))),
+                                                },
+                                            }))}
+                                    />
+                                </div>
+                            </div>
                             <div className="flex flex-wrap gap-2">
                                 <Button
                                     size="sm"
@@ -674,7 +843,7 @@ export function CoworkerTaskBoard() {
                                         || latestApprovalState(task) === "pending"
                                         || !(role === "maker" || role === "admin")
                                     }
-                                    onClick={() => runTask(task.id)}
+                                    onClick={() => runTask(task.id, getRunConfig(task.id))}
                                 >
                                     {runningTaskId === task.id ? "Launching..." : "Run Task"}
                                 </Button>
@@ -718,6 +887,33 @@ export function CoworkerTaskBoard() {
                                     Save Result
                                 </Button>
                             </div>
+                            <details className="rounded-md border bg-muted/30 p-2">
+                                <summary className="cursor-pointer text-sm font-medium">Audit Timeline</summary>
+                                <div className="mt-2 space-y-2">
+                                    {(Array.isArray(task.history) && task.history.length > 0) ? (
+                                        [...task.history].reverse().slice(0, 12).map((entry, index) => {
+                                            const record = entry as Record<string, unknown>;
+                                            const when = String(record.at || "");
+                                            const note = String(record.note || "");
+                                            return (
+                                                <div key={`${task.id}-history-${index}`} className="rounded border bg-background p-2 text-xs">
+                                                    <p className="font-medium">{formatHistoryEvent(record)}</p>
+                                                    <p className="text-muted-foreground">{when ? new Date(when).toLocaleString() : "Unknown time"}</p>
+                                                    {record.simulation_id ? (
+                                                        <p className="text-muted-foreground">Simulation: {String(record.simulation_id)}</p>
+                                                    ) : null}
+                                                    {record.assignee ? (
+                                                        <p className="text-muted-foreground">Assignee: {String(record.assignee)}</p>
+                                                    ) : null}
+                                                    {note ? <p className="text-muted-foreground">Note: {note}</p> : null}
+                                                </div>
+                                            );
+                                        })
+                                    ) : (
+                                        <p className="text-xs text-muted-foreground">No audit entries.</p>
+                                    )}
+                                </div>
+                            </details>
                         </div>
                     ))}
                 </CardContent>
