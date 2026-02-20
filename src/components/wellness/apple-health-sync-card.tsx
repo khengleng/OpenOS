@@ -127,7 +127,7 @@ export function AppleHealthSyncCard() {
                     </p>
                 </div>
                 <Badge variant={data?.connected ? 'default' : 'secondary'}>
-                    {data?.connected ? 'Connected' : 'Not Connected'}
+                    {error ? 'Not Connected' : data?.connected ? 'Connected' : 'Not Connected'}
                 </Badge>
             </CardHeader>
             <CardContent className="space-y-4">
