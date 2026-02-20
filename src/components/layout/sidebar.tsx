@@ -3,7 +3,7 @@
 import Link from "next/link";
 import { usePathname } from "next/navigation";
 import { Button } from "@/components/ui/button";
-import { Calendar, Wallet, Users, Activity, Settings, LogOut, Bot } from "lucide-react";
+import { Calendar, Wallet, Users, Activity, Settings, LogOut, Bot, ShieldCheck } from "lucide-react";
 
 const sidebarItems = [
     { name: "Planning", href: "/planning", icon: Calendar },
@@ -11,6 +11,7 @@ const sidebarItems = [
     { name: "Community", href: "/community", icon: Users },
     { name: "Wellness", href: "/wellness", icon: Activity },
     { name: "Agents", href: "/agents", icon: Bot },
+    { name: "RBAC", href: "/rbac", icon: ShieldCheck },
 ];
 
 export function Sidebar() {
