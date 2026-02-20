@@ -1,7 +1,6 @@
 import { NextResponse } from "next/server";
 import { getAuthenticatedUserId, unauthorizedResponse } from "@/lib/route-auth";
 import { getCurrentUserRole } from "@/lib/rbac";
-import { createClient } from "@/lib/supabase/server";
 import { createAdminClient } from "@/lib/supabase/admin";
 
 function isMissingUserRolesTableError(error: unknown): boolean {
@@ -23,7 +22,13 @@ export async function GET() {
         return NextResponse.json({ error: "Only admin can list role assignments" }, { status: 403 });
     }
 
-    const supabase = await createClient();
+    const supabase = createAdminClient();
+    if (!supabase) {
+        return NextResponse.json(
+            { error: "Missing Supabase admin client configuration" },
+            { status: 503 },
+        );
+    }
     const { data, error } = await supabase
         .from("user_roles")
         .select("user_id, role, created_at, updated_at")

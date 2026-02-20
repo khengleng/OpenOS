@@ -1,7 +1,7 @@
 import { NextResponse } from "next/server";
 import { getAuthenticatedUserId, unauthorizedResponse } from "@/lib/route-auth";
-import { createClient } from "@/lib/supabase/server";
 import { AppRole } from "@/lib/rbac";
+import { createAdminClient } from "@/lib/supabase/admin";
 
 function isMissingUserRolesTableError(error: unknown): boolean {
     const code = typeof error === "object" && error !== null && "code" in error
@@ -25,7 +25,13 @@ export async function GET() {
         return unauthorizedResponse();
     }
 
-    const supabase = await createClient();
+    const supabase = createAdminClient();
+    if (!supabase) {
+        return NextResponse.json(
+            { error: "Missing Supabase admin client configuration" },
+            { status: 503 },
+        );
+    }
 
     const roleResult = await supabase
         .from("user_roles")

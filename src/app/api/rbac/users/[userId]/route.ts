@@ -1,7 +1,7 @@
 import { NextRequest, NextResponse } from "next/server";
 import { getAuthenticatedUserId, unauthorizedResponse } from "@/lib/route-auth";
 import { getCurrentUserRole } from "@/lib/rbac";
-import { createClient } from "@/lib/supabase/server";
+import { createAdminClient } from "@/lib/supabase/admin";
 
 type AppRole = "maker" | "checker" | "admin";
 
@@ -38,7 +38,13 @@ export async function PATCH(
     }
 
     const { userId } = await context.params;
-    const supabase = await createClient();
+    const supabase = createAdminClient();
+    if (!supabase) {
+        return NextResponse.json(
+            { error: "Missing Supabase admin client configuration" },
+            { status: 503 },
+        );
+    }
     const now = new Date().toISOString();
     const { data, error } = await supabase
         .from("user_roles")
@@ -76,7 +82,13 @@ export async function DELETE(
         return NextResponse.json({ error: "Admin cannot remove their own role" }, { status: 400 });
     }
 
-    const supabase = await createClient();
+    const supabase = createAdminClient();
+    if (!supabase) {
+        return NextResponse.json(
+            { error: "Missing Supabase admin client configuration" },
+            { status: 503 },
+        );
+    }
     const { error } = await supabase
         .from("user_roles")
         .delete()
