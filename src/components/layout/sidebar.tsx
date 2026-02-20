@@ -47,9 +47,15 @@ export function Sidebar() {
                         Settings
                     </Button>
                 </Link>
-                <Button variant="ghost" className="w-full justify-start text-red-500 hover:text-red-600 hover:bg-red-50">
-                    <LogOut className="mr-2 h-4 w-4" />
-                    Logout
+                <Button
+                    variant="ghost"
+                    className="w-full justify-start text-red-500 hover:text-red-600 hover:bg-red-50"
+                    asChild
+                >
+                    <Link href="/auth/logout">
+                        <LogOut className="mr-2 h-4 w-4" />
+                        Logout
+                    </Link>
                 </Button>
             </div>
         </div>
