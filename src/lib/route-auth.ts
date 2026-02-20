@@ -6,10 +6,6 @@ function hasSupabaseConfig() {
 }
 
 export async function getAuthenticatedUserId(): Promise<string | null> {
-    if (!hasSupabaseConfig()) {
-        return null;
-    }
-
     try {
         const supabase = await createClient();
         const {
