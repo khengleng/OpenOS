@@ -21,11 +21,28 @@ export async function updateSession(request: NextRequest) {
     // supabase.auth.getUser(). A simple mistake could make it very hard to debug
     // issues with users being randomly logged out.
 
-    const {
-        data: { user },
-    } = await supabase.auth.getUser()
+    let hasUser = false
+    try {
+        const {
+            data: { session },
+        } = await supabase.auth.getSession()
+        hasUser = Boolean(session?.user)
 
-    if (shouldRedirectToLogin(request, Boolean(user))) {
+        const {
+            data: { user },
+            error,
+        } = await supabase.auth.getUser()
+
+        // getUser is authoritative; but on transient failures, keep existing
+        // session state instead of force-redirecting to /login.
+        if (!error) {
+            hasUser = Boolean(user)
+        }
+    } catch {
+        // Avoid logging users out during temporary auth service/network issues.
+    }
+
+    if (shouldRedirectToLogin(request, hasUser)) {
         return NextResponse.redirect(createLoginRedirect(request))
     }
 
